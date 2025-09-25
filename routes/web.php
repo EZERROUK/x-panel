@@ -16,6 +16,7 @@ use App\Http\Controllers\{
     CurrencyController,
     AppSettingController,
     AuditLogController,
+    DashboardController,
     StockMovementController,
     ProviderController,
     QuoteController,
@@ -25,6 +26,8 @@ use App\Http\Controllers\{
     InvoiceController,
     CategoryAttributesController,
     SetupController,
+    PromotionController,
+    QuotePromotionController,
 };
 use Spatie\Activitylog\Models\Activity;
 use App\Models\AppSetting;
@@ -64,15 +67,12 @@ Route::get('/setup/conditions', fn () => Inertia::render('Setup/ConditionsUtilis
 */
 Route::middleware(['auth', 'verified'])->group(function () {
 
-    /* ------------------------------------------------------------------ */
-    /* Dashboard : accessible à tous les authentifiés                      */
-    /* ------------------------------------------------------------------ */
-    Route::get('/dashboard', fn () => Inertia::render('dashboard'))
+    /* Dashboard */
+    Route::middleware(['auth', 'verified'])
+        ->get('/dashboard', [DashboardController::class, 'index'])
         ->name('dashboard');
 
-    /* ------------------------------------------------------------------ */
-    /* Catalogue – Catégories                                             */
-    /* ------------------------------------------------------------------ */
+    /* Catalogue – Catégories */
     Route::prefix('categories')->name('categories.')->group(function () {
         Route::get('/',                [CategoryController::class, 'index'  ])->middleware('permission:category_list'  )->name('index');
         Route::get('/create',          [CategoryController::class, 'create' ])->middleware('permission:category_create')->name('create');
@@ -97,9 +97,7 @@ Route::middleware(['auth', 'verified'])->group(function () {
             ->name('attributes-sync');
     });
 
-    /* ------------------------------------------------------------------ */
-    /* Clients                                                            */
-    /* ------------------------------------------------------------------ */
+    /* Clients */
     Route::prefix('clients')->name('clients.')->group(function () {
         Route::get('/',                [ClientController::class, 'index'  ])->middleware('permission:client_list'  )->name('index');
         Route::get('/create',          [ClientController::class, 'create' ])->middleware('permission:client_create')->name('create');
@@ -111,9 +109,7 @@ Route::middleware(['auth', 'verified'])->group(function () {
         Route::post('/{id}/restore',   [ClientController::class, 'restore'])->middleware('permission:client_restore')->name('restore');
     });
 
-    /* ------------------------------------------------------------------ */
-    /* Devis                                                              */
-    /* ------------------------------------------------------------------ */
+    /* Devis */
     Route::prefix('quotes')->name('quotes.')->group(function () {
         Route::get('/',                [QuoteController::class, 'index']        )->middleware('permission:quote_list'  )->name('index');
         Route::get('/create',          [QuoteController::class, 'create']       )->middleware('permission:quote_create')->name('create');
@@ -126,23 +122,34 @@ Route::middleware(['auth', 'verified'])->group(function () {
         Route::post('/{quote}/change-status',      [QuoteController::class, 'changeStatus'   ])->middleware('permission:quote_edit'  )->name('change-status');
         Route::post('/{quote}/convert-to-order',   [QuoteController::class, 'convertToOrder' ])->middleware('permission:quote_convert')->name('convert-to-order');
         Route::post('/{quote}/convert-to-invoice', [QuoteController::class, 'convertToInvoice'])->middleware('permission:quote_convert')->name('convert-to-invoice');
-        Route::post('/{quote}/duplicate',          [QuoteController::class, 'duplicate'       ])->middleware('permission:quote_create')->name('duplicate');
+        Route::post('/{quote}/duplicate',          [QuoteController::class, 'duplicate']      )->middleware('permission:quote_create')->name('duplicate');
         Route::get('/{quote}/export',              [QuoteController::class, 'export']         )->middleware('permission:quote_export' )->name('export');
+
+        /* Promotions pour devis existants (⇒ Box sur page Show/Edit) */
+        Route::post('/{quote}/promotions/preview', [QuotePromotionController::class, 'preview'])
+            ->middleware('permission:quote_edit')
+            ->name('promotions.preview');
+
+        Route::post('/{quote}/promotions/apply',   [QuotePromotionController::class, 'apply'])
+            ->middleware('permission:quote_edit')
+            ->name('promotions.apply');
+
+        /* Promotions “transient” (page Création de devis) */
+        Route::post('/promotions/preview', [QuotePromotionController::class, 'previewTransient'])
+            ->name('promotions.preview.transient');
+
+        Route::post('/promotions/apply',   [QuotePromotionController::class, 'applyTransient'])
+            ->name('promotions.apply.transient');
     });
 
-    /* ------------------------------------------------------------------ */
-    /* Commandes                                                          */
-    /* ------------------------------------------------------------------ */
+    /* Commandes */
     Route::prefix('orders')->name('orders.')->group(function () {
         Route::get('/',        [OrderController::class, 'index'])->middleware('permission:order_list')->name('index');
         Route::get('/{order}', [OrderController::class, 'show' ])->middleware('permission:order_show')->name('show');
     });
 
-    /* ------------------------------------------------------------------ */
-    /* Catalogue – Produits                                               */
-    /* ------------------------------------------------------------------ */
+    /* Catalogue – Produits */
     Route::prefix('products')->name('products.')->group(function () {
-
         Route::get('/compatible-list', [ProductController::class, 'compatibleList'])
             ->middleware('permission:product_create|product_edit|product_list')
             ->name('compatible-list');
@@ -150,7 +157,6 @@ Route::middleware(['auth', 'verified'])->group(function () {
         Route::get('/',                [ProductController::class, 'index'  ])->middleware('permission:product_list'  )->name('index');
         Route::get('/create',          [ProductController::class, 'create' ])->middleware('permission:product_create')->name('create');
         Route::post('/',               [ProductController::class, 'store'  ])->middleware('permission:product_create')->name('store');
-
         Route::get('/{product}',       [ProductController::class, 'show'   ])->middleware('permission:product_show'  )->name('show');
         Route::get('/{product}/edit',  [ProductController::class, 'edit'   ])->middleware('permission:product_edit'  )->name('edit');
         Route::patch('/{product}',     [ProductController::class, 'update' ])->middleware('permission:product_edit'  )->name('update');
@@ -160,9 +166,7 @@ Route::middleware(['auth', 'verified'])->group(function () {
         Route::delete('/{id}/force-delete', [ProductController::class, 'forceDelete'])->middleware('permission:product_delete'  )->name('force-delete');
     });
 
-    /* ------------------------------------------------------------------ */
-    /* Gestion de Stock                                                   */
-    /* ------------------------------------------------------------------ */
+    /* Gestion de Stock */
     Route::prefix('stock-movements')->name('stock-movements.')->group(function () {
         Route::get('/',                [StockMovementController::class, 'index'  ])->middleware('permission:stock_movement_list'  )->name('index');
         Route::get('/create',          [StockMovementController::class, 'create' ])->middleware('permission:stock_movement_create')->name('create');
@@ -175,31 +179,27 @@ Route::middleware(['auth', 'verified'])->group(function () {
         Route::patch('/{stockMovement}',    [StockMovementController::class, 'update' ])->middleware('permission:stock_movement_edit'  )->name('update');
         Route::delete('/{stockMovement}',   [StockMovementController::class, 'destroy'])->middleware('permission:stock_movement_delete')->name('destroy');
 
-        Route::post('/{id}/restore',        [StockMovementController::class, 'restore'])->middleware('permission:stock_movement_edit'  )->name('restore');
+        Route::post('/{id}/restore',        [StockMovementController::class, 'restore'    ])->middleware('permission:stock_movement_edit'  )->name('restore');
         Route::delete('/{id}/force-delete', [StockMovementController::class, 'forceDelete'])->middleware('permission:stock_movement_delete')->name('force-delete');
     });
 
-    /* ------------------------------------------------------------------ */
-    /* Fournisseurs                                                       */
-    /* ------------------------------------------------------------------ */
+    /* Fournisseurs */
     Route::prefix('providers')->name('providers.')->group(function () {
         Route::get('/',                [ProviderController::class, 'index'  ])->middleware('permission:stock_list'  )->name('index');
         Route::get('/create',          [ProviderController::class, 'create' ])->middleware('permission:stock_create')->name('create');
         Route::post('/',               [ProviderController::class, 'store'  ])->middleware('permission:stock_create')->name('store');
         Route::get('/{provider}',      [ProviderController::class, 'show'   ])->middleware('permission:stock_list'  )->name('show');
-        Route::get('/{provider}/edit', [ProviderController::class, 'edit'   ])->middleware('permission:stock_edit'  )->name('edit');
+        Route::get('/{provider}/edit}', [ProviderController::class, 'edit' ])->middleware('permission:stock_edit'  )->name('edit'); // NOTE: verify closing brace if typo in route
         Route::patch('/{provider}',    [ProviderController::class, 'update' ])->middleware('permission:stock_edit'  )->name('update');
         Route::delete('/{provider}',   [ProviderController::class, 'destroy'])->middleware('permission:stock_delete')->name('destroy');
         Route::post('/{id}/restore',   [ProviderController::class, 'restore'])->middleware('permission:stock_edit'  )->name('restore');
     });
 
-    /* ------------------------------------------------------------------ */
-    /* Motifs de mouvements de stock                                      */
-    /* ------------------------------------------------------------------ */
+    /* Motifs de mouvements de stock */
     Route::prefix('stock-movement-reasons')->name('stock-movement-reasons.')->group(function () {
         Route::get('/',                [StockMovementReasonController::class, 'index'  ])->middleware('permission:stock_list'  )->name('index');
-        Route::get('/create',          [StockMovementReasonController::class, 'create' ])->middleware('permission:stock_create')->name('create');
-        Route::post('/',               [StockMovementReasonController::class, 'store'  ])->middleware('permission:stock_create')->name('store');
+        Route::get('/create',          [StockMovementReasonController::class, 'create'])->middleware('permission:stock_create')->name('create');
+        Route::post('/',               [StockMovementReasonController::class, 'store' ])->middleware('permission:stock_create')->name('store');
         Route::get('/{stockMovementReason}',      [StockMovementReasonController::class, 'show'   ])->middleware('permission:stock_list'  )->name('show');
         Route::get('/{stockMovementReason}/edit', [StockMovementReasonController::class, 'edit'   ])->middleware('permission:stock_edit'  )->name('edit');
         Route::patch('/{stockMovementReason}',    [StockMovementReasonController::class, 'update' ])->middleware('permission:stock_edit'  )->name('update');
@@ -207,9 +207,7 @@ Route::middleware(['auth', 'verified'])->group(function () {
         Route::post('/{id}/restore',             [StockMovementReasonController::class, 'restore'])->middleware('permission:stock_edit'  )->name('restore');
     });
 
-    /* ------------------------------------------------------------------ */
-    /* Taxes                                                              */
-    /* ------------------------------------------------------------------ */
+    /* Taxes */
     Route::prefix('tax-rates')->name('taxrates.')->group(function () {
         Route::get('/',                [TaxRateController::class, 'index'  ])->middleware('permission:taxrate_list'  )->name('index');
         Route::get('/create',          [TaxRateController::class, 'create' ])->middleware('permission:taxrate_create')->name('create');
@@ -221,9 +219,7 @@ Route::middleware(['auth', 'verified'])->group(function () {
         Route::post('/{id}/restore',   [TaxRateController::class, 'restore'])->middleware('permission:taxrate_restore')->name('restore');
     });
 
-    /* ------------------------------------------------------------------ */
-    /* Devises                                                            */
-    /* ------------------------------------------------------------------ */
+    /* Devises */
     Route::prefix('currencies')->name('currencies.')->group(function () {
         Route::get('/',                [CurrencyController::class, 'index'  ])->middleware('permission:currency_list'  )->name('index');
         Route::get('/create',          [CurrencyController::class, 'create' ])->middleware('permission:currency_create')->name('create');
@@ -235,9 +231,7 @@ Route::middleware(['auth', 'verified'])->group(function () {
         Route::post('/{id}/restore',   [CurrencyController::class, 'restore'])->middleware('permission:currency_restore')->name('restore');
     });
 
-    /* ------------------------------------------------------------------ */
-    /* Utilisateurs                                                       */
-    /* ------------------------------------------------------------------ */
+    /* Utilisateurs */
     Route::prefix('users')->name('users.')->group(function () {
         Route::get('/',                [UserController::class, 'index'  ])->middleware('permission:user_list'  )->name('index');
         Route::get('/export',          [UserController::class, 'export' ])->middleware('permission:user_export')->name('export');
@@ -251,9 +245,7 @@ Route::middleware(['auth', 'verified'])->group(function () {
         Route::delete('/{id}/force-delete', [UserController::class, 'forceDelete'])->middleware('permission:user_delete')->name('force-delete');
     });
 
-    /* ------------------------------------------------------------------ */
-    /* Rôles                                                              */
-    /* ------------------------------------------------------------------ */
+    /* Rôles */
     Route::prefix('roles')->name('roles.')->group(function () {
         Route::get('/',                [RoleController::class, 'index'  ])->middleware('permission:role_list'  )->name('index');
         Route::get('/create',          [RoleController::class, 'create' ])->middleware('permission:role_create')->name('create');
@@ -265,9 +257,7 @@ Route::middleware(['auth', 'verified'])->group(function () {
         Route::post('/{id}/restore',   [RoleController::class, 'restore'])->middleware('permission:role_restore')->name('restore');
     });
 
-    /* ------------------------------------------------------------------ */
-    /* Permissions                                                        */
-    /* ------------------------------------------------------------------ */
+    /* Permissions */
     Route::prefix('permissions')->name('permissions.')->group(function () {
         Route::get('/',                   [PermissionController::class, 'index' ])->middleware('permission:permission_list'  )->name('index');
         Route::get('/create',             [PermissionController::class, 'create'])->middleware('permission:permission_create')->name('create');
@@ -279,9 +269,7 @@ Route::middleware(['auth', 'verified'])->group(function () {
         Route::post('/{id}/restore',      [PermissionController::class, 'restore'])->middleware('permission:permission_restore')->name('restore');
     });
 
-    /* ------------------------------------------------------------------ */
-    /* Factures                                                           */
-    /* ------------------------------------------------------------------ */
+    /* Factures */
     Route::prefix('invoices')->name('invoices.')->group(function () {
         Route::get('/',                    [InvoiceController::class, 'index'])->middleware('permission:invoice_list'   )->name('index');
         Route::get('/{invoice}',           [InvoiceController::class, 'show' ])->middleware('permission:invoice_show'   )->name('show');
@@ -296,9 +284,7 @@ Route::middleware(['auth', 'verified'])->group(function () {
         Route::post('/{invoice}/reopen',        [InvoiceController::class, 'reopen'])->middleware('permission:invoice_reopen')->name('reopen');
     });
 
-    /* ------------------------------------------------------------------ */
-    /* Logs d'audit & de connexion                                        */
-    /* ------------------------------------------------------------------ */
+    /* Logs d'audit & de connexion */
     Route::get('/audit-logs', function () {
         $logs = Activity::with('causer')->latest()->get();
 
@@ -316,7 +302,7 @@ Route::middleware(['auth', 'verified'])->group(function () {
         ->middleware('permission:audit_export')
         ->name('audit-logs.export');
 
-    Route::get('/login-logs',        [LoginLogController::class, 'index' ])
+    Route::get('/login-logs', [LoginLogController::class, 'index'])
         ->middleware('permission:loginlog_list')
         ->name('login-logs.index');
 
@@ -324,9 +310,7 @@ Route::middleware(['auth', 'verified'])->group(function () {
         ->middleware('permission:loginlog_export')
         ->name('login-logs.export');
 
-    /* ------------------------------------------------------------------ */
-    /* *** API FRONT interne (accessible en session) ***                  */
-    /* ------------------------------------------------------------------ */
+    /* API FRONT interne (accessible en session) */
     Route::prefix('api')->group(function () {
         Route::get('/categories/{category}/attributes', [CategoryController::class, 'apiAttributes'])
             ->middleware('permission:category_show')
@@ -340,6 +324,22 @@ Route::middleware(['auth', 'verified'])->group(function () {
             ->middleware('permission:product_create|product_edit|product_list')
             ->name('api.products.compatible-list');
     });
+
+    /* ✅ Promotions (back-office CRUD) */
+    Route::prefix('promotions')->name('promotions.')->group(function () {
+        Route::get('/',                 [PromotionController::class, 'index'  ])->middleware('permission:promotion_list'  )->name('index');
+        Route::get('/create',           [PromotionController::class, 'create' ])->middleware('permission:promotion_create')->name('create');
+        Route::post('/',                [PromotionController::class, 'store'  ])->middleware('permission:promotion_create')->name('store');
+        Route::get('/{promotion}/edit', [PromotionController::class, 'edit'   ])->middleware('permission:promotion_edit'  )->name('edit');
+
+        Route::match(['put','patch'], '/{promotion}', [PromotionController::class, 'update'])
+            ->middleware('permission:promotion_edit')
+            ->name('update');
+
+        Route::delete('/{promotion}',   [PromotionController::class, 'destroy'])->middleware('permission:promotion_delete')->name('destroy');
+        Route::delete('/',              [PromotionController::class, 'massDestroy'])->middleware('permission:promotion_delete')->name('mass-destroy');
+    });
+
 });
 
 require __DIR__ . '/settings.php';

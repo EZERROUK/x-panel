@@ -20,6 +20,7 @@ class QuoteItem extends Model
         'line_tax_amount',
         'line_total_ttc',
         'sort_order',
+        'discount_amount',
     ];
 
     protected $casts = [
@@ -29,6 +30,7 @@ class QuoteItem extends Model
         'line_total_ht' => 'decimal:2',
         'line_tax_amount' => 'decimal:2',
         'line_total_ttc' => 'decimal:2',
+        'discount_amount'        => 'decimal:2',
     ];
 
     /* Relations */

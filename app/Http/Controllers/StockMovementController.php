@@ -17,8 +17,10 @@ use Illuminate\Http\{
 };
 use Illuminate\Support\Facades\{
     Auth,
-    Storage
+    Storage,
+    DB
 };
+use Illuminate\Support\Carbon;
 use Inertia\Inertia;
 use Inertia\Response;
 
@@ -256,28 +258,35 @@ class StockMovementController extends Controller
     }
 
     /* -----------------------------------------------------------------
-     |  RAPPORT (aperçu simplifié)
+     |  RAPPORT (compat Dashboard)
      |----------------------------------------------------------------- */
-    public function report(): Response
+    public function report(Request $request): Response
     {
+        // Période (par défaut 30 jours)
+        $period = (int) $request->integer('period', 30);
+        if ($period <= 0) $period = 30;
 
-        // Récupérer les produits avec leurs mouvements
+        $end   = Carbon::now()->endOfDay();
+        $start = Carbon::now()->subDays($period - 1)->startOfDay();
+
+        // Produits + catégorie (pour vue report)
         $products = Product::with(['category:id,name'])
             ->select('id', 'name', 'sku', 'stock_quantity', 'category_id')
             ->orderBy('name')
             ->get();
 
-        // Calculer les totaux pour chaque produit
-        $products = $products->map(function ($product) {
+        // Totaux par produit sur la période
+        $products = $products->map(function ($product) use ($start, $end) {
             $movements = StockMovement::where('product_id', $product->id)
                 ->whereNull('deleted_at')
+                ->whereBetween('movement_date', [$start, $end])
                 ->get();
 
-            $total_in = $movements->where('type', 'in')->sum('quantity');
-            $total_out = $movements->where('type', 'out')->sum(function ($movement) {
-                return abs($movement->quantity); // Les sorties sont souvent négatives
+            $total_in = (int) $movements->where('type', 'in')->sum('quantity');
+            $total_out = (int) $movements->where('type', 'out')->sum(function ($m) {
+                return abs($m->quantity);
             });
-            $total_adjustments = $movements->where('type', 'adjustment')->sum('quantity');
+            $total_adjustments = (int) $movements->where('type', 'adjustment')->sum('quantity');
 
             $product->total_in = $total_in;
             $product->total_out = $total_out;
@@ -286,20 +295,133 @@ class StockMovementController extends Controller
             return $product;
         });
 
-        // Calculer les statistiques globales
+        // Statistiques globales
         $globalStats = [
-            'total_products' => $products->count(),
-            'total_stock' => $products->sum('stock_quantity'),
-            'low_stock_count' => $products->where('stock_quantity', '<', 10)->count(),
-            'out_of_stock_count' => $products->where('stock_quantity', 0)->count(),
-            'total_in' => $products->sum('total_in'),
-            'total_out' => $products->sum('total_out'),
-            'total_adjustments' => $products->sum('total_adjustments'),
+            'total_products'      => $products->count(),
+            'total_stock'         => (int) $products->sum('stock_quantity'),
+            'low_stock_count'     => $products->where('stock_quantity', '<', 10)->count(),
+            'out_of_stock_count'  => $products->where('stock_quantity', 0)->count(),
+            'total_in'            => (int) $products->sum('total_in'),
+            'total_out'           => (int) $products->sum('total_out'),
+            'total_adjustments'   => (int) $products->sum('total_adjustments'),
         ];
 
+        // KPIs pour le Dashboard
+        $kpis = [
+            'total_in'            => ['value' => $globalStats['total_in']],
+            'total_out'           => ['value' => $globalStats['total_out']],
+            'net_change'          => ['value' => $globalStats['total_in'] - $globalStats['total_out']],
+            'total_stock'         => ['value' => $globalStats['total_stock']],
+            'total_products'      => ['value' => $globalStats['total_products']],
+            'low_stock_count'     => ['value' => $globalStats['low_stock_count']],
+            'out_of_stock_count'  => ['value' => $globalStats['out_of_stock_count']],
+        ];
+
+        // Série journalière des mouvements
+        $raw = StockMovement::selectRaw("
+                DATE(movement_date) as d,
+                SUM(CASE WHEN type='in' THEN quantity ELSE 0 END) as total_in,
+                SUM(CASE WHEN type='out' THEN ABS(quantity) ELSE 0 END) as total_out,
+                SUM(CASE WHEN type='adjustment' THEN quantity ELSE 0 END) as total_adj
+            ")
+            ->whereNull('deleted_at')
+            ->whereBetween('movement_date', [$start, $end])
+            ->groupBy('d')
+            ->orderBy('d')
+            ->get()
+            ->keyBy('d');
+
+        $movementsChart = [];
+        $cursor = $start->copy();
+        while ($cursor->lte($end)) {
+            $day = $cursor->toDateString();
+            $row = $raw->get($day);
+
+            $in  = (int) ($row->total_in  ?? 0);
+            $out = (int) ($row->total_out ?? 0);
+            $adj = (int) ($row->total_adj ?? 0);
+
+            $movementsChart[] = [
+                'date'        => $day,
+                'label'       => $cursor->format('d/m'),
+                'in'          => $in,
+                'out'         => $out,
+                'adjustments' => $adj,
+                'net'         => $in - $out + $adj,
+            ];
+
+            $cursor->addDay();
+        }
+
+        // Top produits plus mouvants
+        $topMoving = StockMovement::query()
+            ->selectRaw('product_id,
+                SUM(CASE WHEN type="in" THEN quantity ELSE 0 END) as in_qty,
+                SUM(CASE WHEN type="out" THEN ABS(quantity) ELSE 0 END) as out_qty,
+                SUM(CASE WHEN type="adjustment" THEN quantity ELSE 0 END) as adj_qty')
+            ->whereNull('deleted_at')
+            ->whereBetween('movement_date', [$start, $end])
+            ->groupBy('product_id')
+            ->orderByRaw('(ABS(SUM(CASE WHEN type="in" THEN quantity ELSE 0 END) - SUM(CASE WHEN type="out" THEN ABS(quantity) ELSE 0 END) + SUM(CASE WHEN type="adjustment" THEN quantity ELSE 0 END))) DESC')
+            ->limit(10)
+            ->get()
+            ->map(function ($row) {
+                $p = Product::select('id','name','sku','category_id')->with(['category:id,name'])->find($row->product_id);
+                return [
+                    'id'   => $p?->id,
+                    'name' => $p?->name ?? 'Produit supprimé',
+                    'sku'  => $p?->sku,
+                    'in'   => (int) $row->in_qty,
+                    'out'  => (int) $row->out_qty,
+                    'net'  => (int) ($row->in_qty - $row->out_qty + $row->adj_qty),
+                    'category' => $p && $p->category ? ['name' => $p->category->name] : null,
+                ];
+            })
+            ->values();
+
+        // Activité récente
+        $recentMovements = StockMovement::with(['product:id,name,sku'])
+            ->whereNull('deleted_at')
+            ->orderByDesc('movement_date')
+            ->limit(10)
+            ->get()
+            ->map(function ($m) {
+                return [
+                    'id'           => $m->id,
+                    'type'         => $m->type, // 'in' | 'out' | 'adjustment'
+                    'product_name' => $m->product->name ?? '—',
+                    'sku'          => $m->product->sku ?? null,
+                    'quantity'     => (int) $m->quantity,
+                    'reason'       => $m->reason ?? null,
+                    'created_at'   => optional($m->movement_date)->toDateTimeString(),
+                ];
+            });
+
+        // Répartition par catégorie (stock courant)
+        $categoryBalances = Product::with('category:id,name')
+            ->select('id','stock_quantity','category_id')
+            ->get()
+            ->groupBy(fn($p) => $p->category->name ?? 'Sans catégorie')
+            ->map(function ($group, $name) {
+                return [
+                    'name'  => $name,
+                    'stock' => (int) $group->sum('stock_quantity'),
+                ];
+            })
+            ->values();
+
         return Inertia::render('StockMovements/Report', [
-            'products' => $products,
-            'globalStats' => $globalStats,
+            // Pour la vue Report
+            'products'          => $products,
+            'globalStats'       => $globalStats,
+
+            // Pour le Dashboard embarqué
+            'period'            => (string) $period,
+            'kpis'              => $kpis,
+            'movementsChart'    => $movementsChart,
+            'topMoving'         => $topMoving,
+            'recentMovements'   => $recentMovements,
+            'categoryBalances'  => $categoryBalances,
         ]);
     }
 

@@ -38,6 +38,9 @@ class RolePermissionSeeder extends Seeder
             // Devis (quotes)
             'quote_list', 'quote_create', 'quote_show', 'quote_edit', 'quote_delete',
             'quote_convert', 'quote_export',
+            'quote_change_status', // Ajout de la permission
+            'quote_convert_to_invoice', // Ajout de la permission
+            'quote_duplicate', // Ajout de la permission
 
             // Commandes (orders)
             'order_list', 'order_show',
@@ -45,6 +48,7 @@ class RolePermissionSeeder extends Seeder
             // Factures (invoices)
             'invoice_list', 'invoice_create', 'invoice_show', 'invoice_edit', 'invoice_delete',
             'invoice_reopen', 'invoice_export', 'invoice_send',
+            'invoice_mark_paid', 'invoice_send_reminder', 'invoice_change_status', 'invoice_duplicate', // Permissions ajoutées
 
             // Stock & mouvements
             'stock_list', 'stock_create', 'stock_edit', 'stock_delete', 'stock_restore',
@@ -88,10 +92,14 @@ class RolePermissionSeeder extends Seeder
             // Clients / Devis / Commandes
             'client_list','client_create','client_edit','client_delete','client_show',
             'quote_list','quote_create','quote_edit','quote_delete','quote_convert','quote_export','quote_show',
+            'quote_change_status', // Permission ajoutée ici
+            'quote_convert_to_invoice', // Permission ajoutée ici
+            'quote_duplicate', // Permission ajoutée ici
             'order_list','order_show',
 
             // Factures
             'invoice_list','invoice_create','invoice_edit','invoice_reopen','invoice_export','invoice_send','invoice_show',
+            'invoice_mark_paid', 'invoice_send_reminder', 'invoice_change_status', 'invoice_duplicate', // Permissions ajoutées
 
             // Stock
             'stock_list','stock_create','stock_edit','stock_delete',

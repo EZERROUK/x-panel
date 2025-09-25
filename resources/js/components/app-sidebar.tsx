@@ -70,6 +70,7 @@ const elementsNavigation: NavItem[] = [
     icon: Building2,
     children: [
       { title: 'Clients',  href: '/clients',  icon: Users,        required: 'client_list' },
+      { title: 'Promotions',  href: '/promotions', icon: Percent },
       { title: 'Devis',    href: '/quotes',   icon: FileSignature, required: 'quote_list' },
       { title: 'Factures', href: '/invoices', icon: Receipt,       required: 'invoice_list' },
     ],

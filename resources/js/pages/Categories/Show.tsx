@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react'
+import React, { JSX, useMemo, useState } from 'react'
 import { Head, Link, usePage } from '@inertiajs/react'
 import { route } from 'ziggy-js'
 import {
@@ -65,14 +65,6 @@ interface Category {
   user?:    { id?: number|string; name?: string | null } | null
 }
 
-interface Can {
-  update: boolean
-  delete: boolean
-  create: boolean
-  // optionnel: certains backends exposent directement les permissions spatie :
-  category_edit?: boolean
-}
-
 interface ActivityItem {
   id: string | number
   action: string
@@ -81,21 +73,22 @@ interface ActivityItem {
   meta?: Record<string, any>
 }
 
-interface PageAuth {
-  permissions?: string[]
-  abilities?: string[]
-  user?: { permissions?: string[] }
-}
+interface PagePropsAuth { roles?: string[]; permissions?: string[] }
 
-interface PageShared {
-  auth?: PageAuth
-  can?: Record<string, boolean> | undefined
+/* ------------------------------ Permissions ------------------------------ */
+const useCan = () => {
+  const { props } = usePage<{ auth?: PagePropsAuth }>()
+  const roles = props.auth?.roles ?? []
+  const perms = props.auth?.permissions ?? []
+  const isSuperAdmin = roles.includes('SuperAdmin') || roles.includes('super-admin')
+  const set = useMemo(() => new Set(perms), [perms.join(',')])
+  const can = (p?: string) => !p || isSuperAdmin || set.has(p)
+  return { can, isSuperAdmin }
 }
 
 interface Props {
   category: Category
   breadcrumbs?: Array<Pick<Category, 'id' | 'name'>>
-  can?: Can
   logs?: ActivityItem[]
 }
 
@@ -105,28 +98,17 @@ interface Props {
 export default function ShowCategory({
   category,
   breadcrumbs = [],
-  can = { update: false, delete: false, create: false },
   logs = [],
 }: Props) {
   const [activeTab, setActiveTab] = useState<Tab>('overview')
-  const page = usePage<PageShared>()
+  const page = usePage()
 
-  // ----------- Détection robuste de la permission Spatie -----------
-  const hasCategoryEdit = useMemo(() => {
-    const set = new Set<string>([
-      ...(page.props?.auth?.permissions ?? []),
-      ...(page.props?.auth?.abilities ?? []),
-      ...(page.props?.auth?.user?.permissions ?? []),
-    ].filter(Boolean) as string[])
+  const { can } = useCan()
+  const permsKey: string = (page as any).props?.auth?.permissions?.join(',') ?? ''
 
-    const canGlobalFlag = page.props?.can && typeof page.props.can['category_edit'] === 'boolean'
-      ? page.props.can['category_edit']
-      : false
-
-    const canObjectFlag = typeof can.category_edit === 'boolean' ? can.category_edit : false
-
-    return set.has('category_edit') || canGlobalFlag || canObjectFlag || can.update === true
-  }, [page.props, can])
+  // permissions explicites utilisées dans le composant
+  const canEditCategory   = can('category_edit')
+  const canCreateCategory = can('category_create')
 
   /* ---------------------------------------------------------------- */
   /* Données dérivées                                                 */
@@ -176,7 +158,7 @@ export default function ShowCategory({
         >
 
           {/* -------- Bandeau haut -------- */}
-          <div className="p-6">
+          <div className="p-6" key={permsKey}>
             <div className="bg-white dark:bg-white/5 border border-slate-200 dark:border-slate-700 backdrop-blur-md rounded-xl shadow-xl flex flex-col lg:flex-row gap-6 items-start px-4 sm:px-5 py-4 sm:py-5">
               <div className="w-32 h-32 flex items-center justify-center bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg overflow-hidden">
                 {category.is_active
@@ -239,52 +221,48 @@ export default function ShowCategory({
                 </div>
               </div>
 
-              {/* Colonne d’actions : Retour, Attributs (avec icône), Modifier */}
-           <div className="flex flex-col gap-2 w-full sm:w-auto">
-<Link href={route('categories.index')} className="w-full">
-  <Button
-    className="w-full group relative flex items-center justify-center
-               rounded-lg bg-gradient-to-r from-gray-200 to-gray-300 px-5 py-3
-               text-sm font-semibold text-gray-800 transition-all
-               hover:from-gray-300 hover:to-gray-400 focus:ring-2 focus:ring-gray-400"
-  >
-    <ArrowLeft className="w-4 h-4 mr-2" />
-    Retour
-  </Button>
-</Link>
+              {/* Colonne d’actions : Retour, Attributs, Modifier */}
+              <div className="flex flex-col gap-2 w-full sm:w-auto">
+                <Link href={route('categories.index')} className="w-full">
+                  <Button
+                    className="w-full group relative flex items-center justify-center
+                               rounded-lg bg-gradient-to-r from-gray-200 to-gray-300 px-5 py-3
+                               text-sm font-semibold text-gray-800 transition-all
+                               hover:from-gray-300 hover:to-gray-400 focus:ring-2 focus:ring-gray-400"
+                  >
+                    <ArrowLeft className="w-4 h-4 mr-2" />
+                    Retour
+                  </Button>
+                </Link>
 
-{hasCategoryEdit && (
-  <>
-    <Link href={route('categories.attributes.edit', category.id)} className="w-full">
-      <Button
-        className="w-full group relative flex items-center justify-center
-                   rounded-lg bg-gradient-to-r from-[#1B1749] to-[#2a246d] px-5 py-3
-                   text-sm font-semibold text-white transition-all
-                   hover:from-[#2a246d] hover:to-[#1B1749] focus:ring-2 focus:ring-[#1B1749]"
-      >
-        <ListChecks className="w-4 h-4 mr-2" />
-        Gérer les attributs
-      </Button>
-    </Link>
+                {canEditCategory && (
+                  <>
+                    <Link href={route('categories.attributes.edit', category.id)} className="w-full">
+                      <Button
+                        className="w-full group relative flex items-center justify-center
+                                   rounded-lg bg-gradient-to-r from-[#1B1749] to-[#2a246d] px-5 py-3
+                                   text-sm font-semibold text-white transition-all
+                                   hover:from-[#2a246d] hover:to-[#1B1749] focus:ring-2 focus:ring-[#1B1749]"
+                      >
+                        <ListChecks className="w-4 h-4 mr-2" />
+                        Gérer les attributs
+                      </Button>
+                    </Link>
 
-    <Link href={route('categories.edit', category.id)} className="w-full">
-      <Button
-        className="w-full group relative flex items-center justify-center
-                   rounded-lg bg-gradient-to-r from-red-600 to-red-500 px-5 py-3
-                   text-sm font-semibold text-white transition-all
-                   hover:from-red-500 hover:to-red-600 focus:ring-2 focus:ring-red-500"
-      >
-        <Pencil className="w-4 h-4 mr-2" />
-        Modifier
-      </Button>
-    </Link>
-  </>
-)}
-
-
-
-
-</div>
+                    <Link href={route('categories.edit', category.id)} className="w-full">
+                      <Button
+                        className="w-full group relative flex items-center justify-center
+                                   rounded-lg bg-gradient-to-r from-red-600 to-red-500 px-5 py-3
+                                   text-sm font-semibold text-white transition-all
+                                   hover:from-red-500 hover:to-red-600 focus:ring-2 focus:ring-red-500"
+                      >
+                        <Pencil className="w-4 h-4 mr-2" />
+                        Modifier
+                      </Button>
+                    </Link>
+                  </>
+                )}
+              </div>
 
             </div>
           </div>
@@ -302,40 +280,38 @@ export default function ShowCategory({
               {/* contenu */}
               <div className="p-6 md:col-span-3 overflow-y-auto text-slate-700 dark:text-slate-300">
                 {/* --- Aperçu / Détails --- */}
-              {/* --- Aperçu / Détails --- */}
-{activeTab === 'overview' && (
-  <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
-    <Detail icon={Hash}   label="Slug"         value={
-      <div className="flex items-center gap-2">
-        <code className="font-mono">{category.slug}</code>
-        <button
-          type="button"
-          onClick={copySlug}
-          className="inline-flex items-center gap-1 rounded-md border border-slate-200 dark:border-slate-700 px-2 py-1 text-xs hover:bg-slate-50 dark:hover:bg-white/5"
-          title="Copier le slug"
-        >
-          <Clipboard className="w-3.5 h-3.5" /> Copier
-        </button>
-      </div>
-    } />
-    <Detail icon={Layers} label="Ordre de tri" value={category.sort_order} />
+                {activeTab === 'overview' && (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
+                    <Detail icon={Hash as any}   label="Slug"         value={
+                      <div className="flex items-center gap-2">
+                        <code className="font-mono">{category.slug}</code>
+                        <button
+                          type="button"
+                          onClick={copySlug}
+                          className="inline-flex items-center gap-1 rounded-md border border-slate-200 dark:border-slate-700 px-2 py-1 text-xs hover:bg-slate-50 dark:hover:bg-white/5"
+                          title="Copier le slug"
+                        >
+                          <Clipboard className="w-3.5 h-3.5" /> Copier
+                        </button>
+                      </div>
+                    } />
+                    <Detail icon={Layers as any} label="Ordre de tri" value={category.sort_order} />
 
-    {/* 👇 existant */}
-    <Detail icon={Calendar} label="Créé le"    value={created.toLocaleString('fr-FR')} />
+                    {/* existant */}
+                    <Detail icon={Calendar as any} label="Créé le"    value={created.toLocaleString('fr-FR')} />
 
-    {/* 👇 AJOUT: juste après "Créé le" */}
-    {creatorName && (
-      <Detail icon={Users} label="Créé par" value={creatorName} />
-    )}
+                    {/* AJOUT: juste après "Créé le" */}
+                    {creatorName && (
+                      <Detail icon={Users as any} label="Créé par" value={creatorName} />
+                    )}
 
-    {updated && <Detail icon={Calendar} label="Modifié le" value={updated.toLocaleString('fr-FR')} />}
+                    {updated && <Detail icon={Calendar as any} label="Modifié le" value={updated.toLocaleString('fr-FR')} />}
 
-    {typeof category.products_count === 'number' && (
-      <Detail icon={Users} label="Produits" value={category.products_count} />
-    )}
-  </div>
-)}
-
+                    {typeof category.products_count === 'number' && (
+                      <Detail icon={Users as any} label="Produits" value={category.products_count} />
+                    )}
+                  </div>
+                )}
 
                 {/* --- Hiérarchie (parente + sous-catégories) --- */}
                 {activeTab === 'hierarchy' && (
@@ -374,7 +350,7 @@ export default function ShowCategory({
                         <h3 className="text-lg font-semibold text-slate-900 dark:text-white/90 border-b border-slate-200 dark:border-slate-700 pb-1">
                           Sous-catégories ({children.length})
                         </h3>
-                        {can.create && hasCategoryEdit && (
+                        {canCreateCategory && canEditCategory && (
                           <Link href={route('categories.create', { parent_id: category.id })}>
                             <Button className="rounded-lg bg-gradient-to-r from-red-600 to-red-500 text-white hover:from-red-500 hover:to-red-600">
                               Nouvelle sous-catégorie
@@ -441,12 +417,14 @@ export default function ShowCategory({
                       <h3 className="text-lg font-semibold text-slate-900 dark:text-white/90">
                         Attributs ({attributes.length})
                       </h3>
-                      <Link href={route('categories.attributes.edit', category.id)}>
-                        <Button size="sm" variant="outline" className="flex items-center gap-2">
-                          <ListChecks className="w-4 h-4" />
-                          Gérer
-                        </Button>
-                      </Link>
+                      {canEditCategory && (
+                        <Link href={route('categories.attributes.edit', category.id)}>
+                          <Button size="sm" variant="outline" className="flex items-center gap-2">
+                            <ListChecks className="w-4 h-4" />
+                            Gérer
+                          </Button>
+                        </Link>
+                      )}
                     </div>
 
                     {attributes.length === 0 ? (
@@ -548,9 +526,7 @@ export default function ShowCategory({
                                 </span>
                               </div>
                               {item.meta && (
-                                <pre className="mt-2 text-xs text-slate-500 dark:text-slate-400 overflow-x-auto">
-{JSON.stringify(item.meta, null, 2)}
-                                </pre>
+                                <pre className="mt-2 text-xs text-slate-500 dark:text-slate-400 overflow-x-auto">{JSON.stringify(item.meta, null, 2)}</pre>
                               )}
                             </div>
                           </li>

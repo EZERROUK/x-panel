@@ -37,7 +37,7 @@ class AppSettingController extends Controller
     public function update(Request $request)
     {
         $data = $request->validate([
-            'app_name'         => 'required|string|max:100',
+
             'app_slogan'       => 'nullable|string|max:255',
             'primary_color'    => 'nullable|string|max:32',
             'secondary_color'  => 'nullable|string|max:32',

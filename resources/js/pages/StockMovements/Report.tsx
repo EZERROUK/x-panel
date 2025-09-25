@@ -1,12 +1,11 @@
 import React, { useMemo, useState } from 'react'
-import { Head, Link } from '@inertiajs/react'
+import { Head, Link, router } from '@inertiajs/react'
 import { route } from 'ziggy-js'
 import {
-  ArrowLeft, Package2, Download, Search, Filter,
+  ArrowLeft, Package2, Download, Search,
   TrendingUp, TrendingDown, Equal, BarChart3,
   Eye, AlertTriangle, CheckCircle, XCircle,
-  Grid3X3, List, Calendar, Users, Activity,
-  RefreshCw, Package
+  Grid3X3, List, Activity, Clock, PieChart as PieIcon
 } from 'lucide-react'
 
 import AppLayout from '@/layouts/app-layout'
@@ -17,6 +16,13 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import type { PageProps, Product } from '@/types'
+
+// ⬇️ Imports requis pour le dashboard inline
+import { motion } from 'framer-motion'
+import {
+  ResponsiveContainer, CartesianGrid, XAxis, YAxis, Tooltip, Legend,
+  ComposedChart, Area, Bar, Line, PieChart, Pie, Cell
+} from 'recharts'
 
 /* ------------------------------------------------------------------ */
 /* Types & props                                                      */
@@ -38,85 +44,310 @@ interface GlobalStats {
   total_adjustments: number
 }
 
+/* Types pour le dashboard */
+interface KPIsStock {
+  total_in: { value: number }
+  total_out: { value: number }
+  net_change: { value: number }
+  total_stock: { value: number }
+  total_products: { value: number }
+  low_stock_count: { value: number }
+  out_of_stock_count: { value: number }
+}
+interface MovementsPoint { date: string; label: string; in: number; out: number; adjustments?: number; net?: number }
+interface TopMoving { id: string|number|null; name: string; sku?: string|null; in: number; out: number; net: number; category?: { name: string } | null }
+interface RecentMovement { id: string|number; type: 'in'|'out'|'adjustment'; product_name: string; sku?: string|null; quantity: number; reason?: string|null; created_at?: string|null }
+interface CategoryBalance { name: string; stock: number }
+
 interface Props extends PageProps<{
   products: ReportProduct[]
   globalStats: GlobalStats
+  // props pour Dashboard
+  period: string
+  kpis: KPIsStock
+  movementsChart: MovementsPoint[]
+  topMoving: TopMoving[]
+  recentMovements: RecentMovement[]
+  categoryBalances: CategoryBalance[]
 }> {}
 
 /* ------------------------------------------------------------------ */
-/* Component                                                          */
+/* Dashboard inline                                                   */
 /* ------------------------------------------------------------------ */
-export default function StockReport({ products, globalStats }: Props) {
+const COLOR_SCALE = ['#3B82F6', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6', '#06B6D4', '#84CC16', '#F97316']
+
+function fmtInt(n?: number) { return typeof n === 'number' ? new Intl.NumberFormat('fr-FR').format(n) : '-' }
+
+function StockMovementsDashboardInline({
+  period,
+  movementsChart,
+  topMoving,
+  recentMovements,
+  categoryBalances
+}: {
+  period: string
+  movementsChart: MovementsPoint[]
+  topMoving: TopMoving[]
+  recentMovements: RecentMovement[]
+  categoryBalances: CategoryBalance[]
+}) {
+  const [selectedPeriod, setSelectedPeriod] = useState<string>(period || '30')
+
+  const handlePeriodChange = (newPeriod: string) => {
+    setSelectedPeriod(newPeriod)
+    router.get(route('stock-movements.report', { period: newPeriod }), {}, { preserveScroll: true, preserveState: true })
+  }
+
+  return (
+    <div className="space-y-6">
+      {/* Header avec sélecteur de période */}
+      <div className="bg-white dark:bg-white/5 border border-slate-200 dark:border-slate-700 backdrop-blur-md rounded-xl shadow-xl p-6">
+        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+          <div>
+            <h2 className="text-2xl font-bold text-slate-900 dark:text-white flex items-center gap-3">
+              <div className="bg-gradient-to-br from-blue-600 to-blue-500 p-2 rounded-md">
+                <BarChart3 className="w-7 h-7 text-white" />
+              </div>
+              Analyse des mouvements
+            </h2>
+            <p className="text-slate-600 dark:text-slate-300 mt-2">Tendances et activité détaillée</p>
+          </div>
+          <div className="flex items-center gap-3">
+            <select
+              value={selectedPeriod}
+              onChange={(e) => handlePeriodChange(e.target.value)}
+              className="bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg px-4 py-2 text-sm font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
+            >
+              <option value="7">7 derniers jours</option>
+              <option value="30">30 derniers jours</option>
+              <option value="90">90 derniers jours</option>
+              <option value="365">1 an</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      {/* Graphique + Top produits */}
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+        <motion.div initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} transition={{ duration: 0.6, delay: 0.1 }}
+          className="bg-white dark:bg-white/5 border border-slate-200 dark:border-slate-700 backdrop-blur-md rounded-xl shadow-xl p-6">
+          <div className="flex items-center justify-between mb-6">
+            <div>
+              <h3 className="text-lg font-semibold text-slate-900 dark:text-white">Mouvements par jour</h3>
+              <p className="text-sm text-slate-600 dark:text-slate-300">Entrées, sorties, ajustements & net</p>
+            </div>
+          </div>
+          <div className="h-[300px]">
+            <ResponsiveContainer width="100%" height="100%">
+              {Array.isArray(movementsChart) && movementsChart.length ? (
+                <ComposedChart data={movementsChart}>
+                  <CartesianGrid strokeDasharray="3 3" className="dark:stroke-slate-700" />
+                  <XAxis dataKey="label" stroke="#64748b" className="dark:stroke-slate-400" fontSize={12} />
+                  <YAxis yAxisId="left" stroke="#64748b" className="dark:stroke-slate-400" fontSize={12} />
+                  <YAxis yAxisId="right" orientation="right" stroke="#64748b" className="dark:stroke-slate-400" fontSize={12} />
+                  <Tooltip contentStyle={{ backgroundColor: 'white', border: '1px solid #e2e8f0', borderRadius: 8 }} className="dark:!bg-slate-800 dark:!border-slate-700" />
+                  <Area yAxisId="left" type="monotone" dataKey="in" stroke="#10B981" fill="#10B981" fillOpacity={0.15} name="Entrées" />
+                  <Bar yAxisId="left" dataKey="out" fill="#EF4444" name="Sorties" />
+                  <Bar yAxisId="left" dataKey="adjustments" fill="#F59E0B" name="Ajustements" />
+                  <Line yAxisId="right" type="monotone" dataKey="net" stroke="#3B82F6" name="Net" />
+                  <Legend />
+                </ComposedChart>
+              ) : (
+                <div className="flex items-center justify-center h-full text-slate-500 dark:text-slate-400">Aucune série temporelle disponible</div>
+              )}
+            </ResponsiveContainer>
+          </div>
+        </motion.div>
+
+        <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} transition={{ duration: 0.6, delay: 0.15 }}
+          className="bg-white dark:bg-white/5 border border-slate-200 dark:border-slate-700 backdrop-blur-md rounded-xl shadow-xl p-6">
+          <div className="flex items-center justify-between mb-6">
+            <div>
+              <h3 className="text-lg font-semibold text-slate-900 dark:text-white">Produits les plus mouvants</h3>
+              <p className="text-sm text-slate-600 dark:text-slate-300">Top {Math.min(5, Math.max(1, topMoving?.length || 0))}</p>
+            </div>
+          </div>
+          <div className="space-y-4">
+            {topMoving?.length ? (
+              topMoving.slice(0, 5).map((p, index) => (
+                <div key={p.id ?? index} className="flex items-center justify-between p-3 bg-slate-50 dark:bg-slate-800 rounded-lg">
+                  <div className="flex items-center space-x-3">
+                    <div className="w-8 h-8 bg-blue-100 dark:bg-blue-900/30 rounded-full flex items-center justify-center">
+                      <span className="text-sm font-semibold text-blue-600 dark:text-blue-400">#{index + 1}</span>
+                    </div>
+                    <div>
+                      <p className="font-medium text-slate-900 dark:text-white">{p.name}</p>
+                      <p className="text-xs text-slate-500 dark:text-slate-400">{p.sku ?? '—'} • Net {p.net >= 0 ? '+' : ''}{fmtInt(p.net)}</p>
+                    </div>
+                  </div>
+                  <div className="text-right text-xs">
+                    <div className="text-green-600">+{fmtInt(p.in)} in</div>
+                    <div className="text-red-600">-{fmtInt(p.out)} out</div>
+                  </div>
+                </div>
+              ))
+            ) : (
+              <div className="text-center py-8 text-slate-500 dark:text-slate-400">Aucun mouvement sur cette période</div>
+            )}
+          </div>
+        </motion.div>
+      </div>
+
+      {/* Ligne du bas : Répartition catégories + Activité récente */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.6, delay: 0.2 }}
+          className="bg-white dark:bg-white/5 border border-slate-200 dark:border-slate-700 backdrop-blur-md rounded-xl shadow-xl p-6">
+          <div className="flex items-center justify-between mb-6">
+            <div>
+              <h3 className="text-lg font-semibold text-slate-900 dark:text-white">Répartition par catégorie</h3>
+              <p className="text-sm text-slate-600 dark:text-slate-300">Stock courant</p>
+            </div>
+            <div className="bg-slate-50 dark:bg-slate-800 rounded-lg p-2"><PieIcon className="w-5 h-5 text-slate-600 dark:text-slate-300" /></div>
+          </div>
+          {categoryBalances?.length ? (
+            <div className="h-[280px]">
+              <ResponsiveContainer width="100%" height="100%">
+                <PieChart>
+                  <Pie data={categoryBalances} dataKey="stock" nameKey="name" cx="50%" cy="50%" outerRadius={110} label={({ name, percent }) => `${name} ${(percent*100).toFixed(0)}%`}>
+                    {categoryBalances.map((_, i) => <Cell key={i} fill={COLOR_SCALE[i % COLOR_SCALE.length]} />)}
+                  </Pie>
+                  <Tooltip formatter={(v: any) => [fmtInt(v), 'Stock']} />
+                </PieChart>
+              </ResponsiveContainer>
+            </div>
+          ) : (
+            <div className="text-center py-8 text-slate-500 dark:text-slate-400">Aucune donnée catégorie</div>
+          )}
+        </motion.div>
+
+        <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.6, delay: 0.25 }}
+          className="bg-white dark:bg-white/5 border border-slate-200 dark:border-slate-700 backdrop-blur-md rounded-xl shadow-xl p-6 lg:col-span-2">
+          <div className="flex items-center justify-between mb-6">
+            <div>
+              <h3 className="text-lg font-semibold text-slate-900 dark:text-white">Activité récente</h3>
+              <p className="text-sm text-slate-600 dark:text-slate-300">Derniers mouvements saisis</p>
+            </div>
+            <div className="bg-blue-50 dark:bg-blue-900/20 rounded-lg p-2"><Clock className="w-5 h-5 text-blue-600 dark:text-blue-400" /></div>
+          </div>
+          <div className="space-y-3">
+            {recentMovements?.length ? (
+              recentMovements.slice(0, 10).map((m) => {
+                const color = m.type === 'in' ? 'text-green-600' : m.type === 'out' ? 'text-red-600' : 'text-amber-600'
+                const sign = m.type === 'in' ? '+' : m.type === 'out' ? '-' : ''
+                return (
+                  <div key={m.id} className="flex items-center justify-between p-3 bg-slate-50 dark:bg-slate-800 rounded-lg">
+                    <div className="flex items-center gap-3">
+                      <div className="w-8 h-8 bg-slate-100 dark:bg-slate-700 rounded-lg flex items-center justify-center">
+                        {m.type === 'in' ? <TrendingUp className="w-4 h-4 text-green-600" /> : m.type === 'out' ? <TrendingDown className="w-4 h-4 text-red-600" /> : <Equal className="w-4 h-4 text-amber-600" />}
+                      </div>
+                      <div>
+                        <p className="text-sm font-medium text-slate-900 dark:text-white">{m.product_name}{m.sku ? ` • ${m.sku}` : ''}</p>
+                        <p className="text-xs text-slate-500 dark:text-slate-400 capitalize">{m.type}{m.reason ? ` • ${m.reason}` : ''}</p>
+                      </div>
+                    </div>
+                    <div className={`text-sm font-semibold ${color}`}>{sign}{fmtInt(m.quantity)}</div>
+                  </div>
+                )
+              })
+            ) : (
+              <div className="text-center py-8 text-slate-500 dark:text-slate-400">Aucune activité récente</div>
+            )}
+          </div>
+        </motion.div>
+      </div>
+    </div>
+  )
+}
+
+/* ------------------------------------------------------------------ */
+/* Page Report                                                        */
+/* ------------------------------------------------------------------ */
+export default function StockReport({
+  products,
+  globalStats,
+  period,
+  kpis,
+  movementsChart,
+  topMoving,
+  recentMovements,
+  categoryBalances
+}: Props) {
   const [searchTerm, setSearchTerm] = useState('')
   const [selectedCategory, setSelectedCategory] = useState<string>('all')
   const [stockFilter, setStockFilter] = useState<'all' | 'low' | 'out' | 'good'>('all')
   const [viewMode, setViewMode] = useState<'table' | 'cards'>('table')
   const [sortBy, setSortBy] = useState<'name' | 'stock' | 'in' | 'out'>('name')
+  // ⬇️ NOUVEAU : filtre par type de mouvement (incluant ajustements)
+  const [movementFilter, setMovementFilter] = useState<'all' | 'in' | 'out' | 'adjustments'>('all')
 
-  /* -------------------------------------------------------------- */
-  /* Helpers                                                       */
-  /* -------------------------------------------------------------- */
   const getStockStatus = (quantity: number) => {
     if (quantity === 0) return { status: 'out', color: 'text-red-500', bgColor: 'bg-red-500', icon: XCircle }
     if (quantity < 10) return { status: 'low', color: 'text-yellow-500', bgColor: 'bg-yellow-500', icon: AlertTriangle }
     return { status: 'good', color: 'text-green-500', bgColor: 'bg-green-500', icon: CheckCircle }
   }
 
-  const formatNumber = (num: number) => {
-    return new Intl.NumberFormat('fr-FR').format(num)
-  }
+  const formatNumber = (num: number) => new Intl.NumberFormat('fr-FR').format(num)
 
-  /* -------------------------------------------------------------- */
-  /* Filtrage et tri                                               */
-  /* -------------------------------------------------------------- */
   const categories = useMemo(() => {
-    const cats = products.map(p => p.category?.name).filter(Boolean)
+    const cats = products.map(p => p.category?.name).filter(Boolean) as string[]
     return [...new Set(cats)]
   }, [products])
+
+  // ⬇️ Bouton "Réinitialiser" : remet tous les filtres à zéro
+  const handleResetFilters = () => {
+    setSearchTerm('')
+    setSelectedCategory('all')
+    setStockFilter('all')
+    setViewMode('table')
+    setSortBy('name')
+    setMovementFilter('all')
+  }
+
+  const resetToBaseFilters = () => {
+    setStockFilter('all')
+    setMovementFilter('all')
+    setSortBy('name')
+  }
 
   const filteredProducts = useMemo(() => {
     let filtered = [...products]
 
-    // Recherche
     if (searchTerm) {
+      const q = searchTerm.toLowerCase()
       filtered = filtered.filter(p =>
-        p.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        p.sku?.toLowerCase().includes(searchTerm.toLowerCase())
+        p.name.toLowerCase().includes(q) || p.sku?.toLowerCase().includes(q)
       )
     }
 
-    // Catégorie
     if (selectedCategory !== 'all') {
       filtered = filtered.filter(p => p.category?.name === selectedCategory)
     }
 
-    // Filtre par statut de stock
     if (stockFilter !== 'all') {
-      filtered = filtered.filter(p => {
-        const status = getStockStatus(p.stock_quantity).status
-        return status === stockFilter
-      })
+      filtered = filtered.filter(p => getStockStatus(p.stock_quantity).status === stockFilter)
     }
-    // Tri
+
+    // ⬇️ Application du filtre de mouvement
+    if (movementFilter === 'in') {
+      filtered = filtered.filter(p => (p.total_in ?? 0) > 0)
+    } else if (movementFilter === 'out') {
+      filtered = filtered.filter(p => (p.total_out ?? 0) > 0)
+    } else if (movementFilter === 'adjustments') {
+      filtered = filtered.filter(p => (p.total_adjustments ?? 0) !== 0)
+    }
+
     filtered.sort((a, b) => {
       switch (sortBy) {
-        case 'stock':
-          return b.stock_quantity - a.stock_quantity
-        case 'in':
-          return b.total_in - a.total_in
-        case 'out':
-          return b.total_out - a.total_out
-        default:
-          return a.name.localeCompare(b.name)
+        case 'stock': return b.stock_quantity - a.stock_quantity
+        case 'in':    return b.total_in - a.total_in
+        case 'out':   return b.total_out - a.total_out
+        default:      return a.name.localeCompare(b.name)
       }
     })
 
     return filtered
-  }, [products, searchTerm, selectedCategory, stockFilter, sortBy])
+  }, [products, searchTerm, selectedCategory, stockFilter, sortBy, movementFilter])
 
-  /* -------------------------------------------------------------- */
-  /* Render                                                        */
-  /* -------------------------------------------------------------- */
   return (
     <>
       <Head title="Rapport des mouvements de stock" />
@@ -163,24 +394,24 @@ export default function StockReport({ products, globalStats }: Props) {
               </div>
             </div>
 
-            {/* -------- Métriques principales -------- */}
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+            {/* -------- Métriques principales (MÊMES DIMENSIONS QUE DASHBOARD) -------- */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4 mb-8">
               <MetricCard
                 title="Produits totaux"
                 value={globalStats.total_products}
                 icon={Package2}
                 color="from-blue-600 to-blue-500"
                 trend="+5%"
-                onClick={() => setStockFilter('all')}
-                isActive={stockFilter === 'all'}
+                onClick={resetToBaseFilters}
+                isActive={stockFilter === 'all' && movementFilter === 'all'}
               />
               <MetricCard
-                title="Stock actuel"
-                value={globalStats.total_stock}
-                icon={Activity}
+                title="Stock normal"
+                value={globalStats.total_products - globalStats.low_stock_count - globalStats.out_of_stock_count}
+                icon={CheckCircle}
                 color="from-green-600 to-green-500"
                 trend="+12%"
-                onClick={() => setStockFilter('good')}
+                onClick={() => { stockFilter === 'good' ? resetToBaseFilters() : (setStockFilter('good'), setMovementFilter('all')) }}
                 isActive={stockFilter === 'good'}
               />
               <MetricCard
@@ -189,7 +420,7 @@ export default function StockReport({ products, globalStats }: Props) {
                 icon={AlertTriangle}
                 color="from-yellow-600 to-yellow-500"
                 trend="-3%"
-                onClick={() => setStockFilter('low')}
+                onClick={() => { stockFilter === 'low' ? resetToBaseFilters() : (setStockFilter('low'), setMovementFilter('all')) }}
                 isActive={stockFilter === 'low'}
               />
               <MetricCard
@@ -198,14 +429,21 @@ export default function StockReport({ products, globalStats }: Props) {
                 icon={XCircle}
                 color="from-red-600 to-red-500"
                 trend="-8%"
-                onClick={() => setStockFilter('out')}
+                onClick={() => { stockFilter === 'out' ? resetToBaseFilters() : (setStockFilter('out'), setMovementFilter('all')) }}
                 isActive={stockFilter === 'out'}
+              />
+              <MetricCard
+                title="Total Stock"
+                value={globalStats.total_stock}
+                icon={Activity}
+                color="from-slate-600 to-slate-500"
+                trend="+2%"
               />
             </div>
 
-            {/* -------- Résumé des mouvements -------- */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-              <MovementCard
+            {/* -------- Métriques des mouvements (MÊMES DIMENSIONS QUE DASHBOARD) -------- */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 mb-8">
+              <InteractiveMovementCard
                 title="Entrées totales"
                 value={globalStats.total_in}
                 icon={TrendingUp}
@@ -213,8 +451,10 @@ export default function StockReport({ products, globalStats }: Props) {
                 bgColor="from-green-50 to-green-100 dark:from-green-900/20 dark:to-green-800/20"
                 description="Unités reçues"
                 prefix="+"
+                onClick={() => { movementFilter === 'in' ? resetToBaseFilters() : (setMovementFilter('in'), setSortBy('in'), setStockFilter('all')) }}
+                isActive={movementFilter === 'in'}
               />
-              <MovementCard
+              <InteractiveMovementCard
                 title="Sorties totales"
                 value={globalStats.total_out}
                 icon={TrendingDown}
@@ -222,8 +462,10 @@ export default function StockReport({ products, globalStats }: Props) {
                 bgColor="from-red-50 to-red-100 dark:from-red-900/20 dark:to-red-800/20"
                 description="Unités sorties"
                 prefix="-"
+                onClick={() => { movementFilter === 'out' ? resetToBaseFilters() : (setMovementFilter('out'), setSortBy('out'), setStockFilter('all')) }}
+                isActive={movementFilter === 'out'}
               />
-              <MovementCard
+              <InteractiveMovementCard
                 title="Ajustements"
                 value={globalStats.total_adjustments}
                 icon={Equal}
@@ -231,8 +473,30 @@ export default function StockReport({ products, globalStats }: Props) {
                 bgColor="from-blue-50 to-blue-100 dark:from-blue-900/20 dark:to-blue-800/20"
                 description="Corrections appliquées"
                 prefix={globalStats.total_adjustments >= 0 ? "+" : ""}
+                onClick={() => { movementFilter === 'adjustments' ? resetToBaseFilters() : (setMovementFilter('adjustments'), setSortBy('name'), setStockFilter('all')) }}
+                isActive={movementFilter === 'adjustments'}
+              />
+              <InteractiveMovementCard
+                title="Mouvement Net"
+                value={globalStats.total_in - globalStats.total_out + globalStats.total_adjustments}
+                icon={Activity}
+                color="text-slate-600"
+                bgColor="from-slate-50 to-slate-100 dark:from-slate-900/20 dark:to-slate-800/20"
+                description="Variation totale"
+                prefix={globalStats.total_in - globalStats.total_out + globalStats.total_adjustments >= 0 ? "+" : ""}
               />
             </div>
+
+            {/* -------- Dashboard embarqué -------- */}
+            {/* <div className="bg-white/60 dark:bg-white/5 backdrop-blur-md border-slate-200 dark:border-slate-700 rounded-xl shadow-xl p-4">
+              <StockMovementsDashboardInline
+                period={period}
+                movementsChart={movementsChart}
+                topMoving={topMoving}
+                recentMovements={recentMovements}
+                categoryBalances={categoryBalances}
+              />
+            </div> */}
 
             {/* -------- Filtres et contrôles -------- */}
             <Card className="bg-white/60 dark:bg-white/5 backdrop-blur-md border-slate-200 dark:border-slate-700 shadow-xl">
@@ -272,21 +536,18 @@ export default function StockReport({ products, globalStats }: Props) {
                         <SelectItem value="out">Sorties (élevé)</SelectItem>
                       </SelectContent>
                     </Select>
-
-                    <Select value={stockFilter} onValueChange={(value: any) => setStockFilter(value)}>
-                      <SelectTrigger className="w-48 bg-white/50 dark:bg-white/5 border-slate-200 dark:border-slate-700">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="all">Tous les stocks</SelectItem>
-                        <SelectItem value="good">Stock normal</SelectItem>
-                        <SelectItem value="low">Stock faible</SelectItem>
-                        <SelectItem value="out">Ruptures</SelectItem>
-                      </SelectContent>
-                    </Select>
                   </div>
 
                   <div className="flex items-center gap-2">
+                    {/* Bouton de réinitialisation */}
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={handleResetFilters}
+                      className="bg-white/50 dark:bg-white/5"
+                    >
+                      Réinitialiser
+                    </Button>
                     <Button
                       variant={viewMode === 'table' ? 'default' : 'outline'}
                       size="sm"
@@ -463,20 +724,23 @@ export default function StockReport({ products, globalStats }: Props) {
                     {stockFilter === 'low' ? 'Aucun produit en stock faible' :
                      stockFilter === 'out' ? 'Aucune rupture de stock' :
                      stockFilter === 'good' ? 'Aucun produit avec stock normal' :
+                     movementFilter === 'in' ? 'Aucun produit avec des entrées' :
+                     movementFilter === 'out' ? 'Aucun produit avec des sorties' :
+                     movementFilter === 'adjustments' ? 'Aucun produit avec ajustements' :
                      'Aucun produit trouvé'}
                   </h3>
                   <p className="text-slate-500 dark:text-slate-400">
-                    {stockFilter !== 'all' ?
-                      'Cliquez sur "Tous les stocks" pour voir tous les produits.' :
+                    {stockFilter !== 'all' || movementFilter !== 'all' ?
+                      'Cliquez sur "Réinitialiser" pour voir tous les produits.' :
                       'Essayez de modifier vos critères de recherche ou de filtrage.'}
                   </p>
-                  {stockFilter !== 'all' && (
+                  {(stockFilter !== 'all' || movementFilter !== 'all') && (
                     <Button
                       variant="outline"
                       className="mt-4"
-                      onClick={() => setStockFilter('all')}
+                      onClick={handleResetFilters}
                     >
-                      Voir tous les produits
+                      Réinitialiser
                     </Button>
                   )}
                 </CardContent>
@@ -503,66 +767,87 @@ interface MetricCardProps {
 }
 
 const MetricCard = ({ title, value, icon: Icon, color, trend, onClick, isActive }: MetricCardProps) => (
-  <Card
-    className={`bg-white/60 dark:bg-white/5 backdrop-blur-md border-slate-200 dark:border-slate-700 shadow-xl hover:shadow-2xl transition-all duration-300 cursor-pointer transform hover:scale-[1.02] ${
-      isActive ? 'ring-2 ring-blue-500 ring-offset-2 ring-offset-transparent' : ''
+  <motion.div
+    initial={{ opacity: 0, y: 20 }}
+    animate={{ opacity: 1, y: 0 }}
+    transition={{ duration: 0.6, delay: 0 }}
+    className={`relative overflow-hidden rounded-xl shadow-xl p-4 text-white bg-gradient-to-br ${color} hover:shadow-2xl transition-all duration-300 transform hover:-translate-y-1 cursor-pointer ${
+      isActive ? 'ring-2 ring-white ring-offset-2 ring-offset-transparent' : ''
     }`}
     onClick={onClick}
   >
-    <CardContent className="p-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <p className="text-sm font-medium text-slate-600 dark:text-slate-400">{title}</p>
-          <p className="text-3xl font-bold text-slate-900 dark:text-white mt-2">
-            {new Intl.NumberFormat('fr-FR').format(value)}
-          </p>
-          {trend && (
-            <p className="text-xs text-slate-500 dark:text-slate-400 mt-2 flex items-center gap-1">
-              <TrendingUp className="w-3 h-3" />
-              {trend} vs mois dernier
-            </p>
-          )}
-          {isActive && (
-            <p className="text-xs text-blue-600 dark:text-blue-400 mt-1 font-medium">
-              Filtre actif
-            </p>
-          )}
-        </div>
-        <div className={`w-14 h-14 rounded-xl bg-gradient-to-r ${color} flex items-center justify-center shadow-lg`}>
-          <Icon className="w-7 h-7 text-white" />
+    <p className="text-white/80 text-xs font-medium mb-1">{title}</p>
+    <div className="flex items-center justify-between gap-3">
+      <p className="text-xl font-bold">{new Intl.NumberFormat('fr-FR').format(value)}</p>
+      <div className="shrink-0">
+        <div className="bg-white/20 rounded-lg p-2">
+          <Icon className="w-4 h-4 text-white" />
         </div>
       </div>
-    </CardContent>
-  </Card>
+    </div>
+
+    {trend && (
+      <div className="mt-2 flex items-center gap-2">
+        <div className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded-full bg-white/20 text-white">
+          <TrendingUp className="w-3 h-3" />
+          {trend} vs mois dernier
+        </div>
+      </div>
+    )}
+
+    {isActive && (
+      <p className="text-xs text-white/90 mt-1 font-medium">
+        Filtre actif
+      </p>
+    )}
+
+    <div className="absolute top-0 right-0 w-24 h-24 bg-white/10 rounded-full -translate-y-12 translate-x-12" />
+  </motion.div>
 )
 
-interface MovementCardProps {
+interface InteractiveMovementCardProps {
   title: string
   value: number
   icon: React.ElementType
   color: string
   bgColor: string
   description: string
-  prefix: string
+  prefix?: string
+  onClick?: () => void
+  isActive?: boolean
 }
 
-const MovementCard = ({ title, value, icon: Icon, color, bgColor, description, prefix }: MovementCardProps) => (
-  <Card className="bg-white/60 dark:bg-white/5 backdrop-blur-md border-slate-200 dark:border-slate-700 shadow-xl hover:shadow-2xl transition-all duration-300">
-    <CardHeader className="pb-3">
-      <CardTitle className="text-sm font-medium text-slate-600 dark:text-slate-400 flex items-center gap-2">
-        <div className={`w-8 h-8 rounded-lg bg-gradient-to-r ${bgColor} flex items-center justify-center`}>
-          <Icon className={`w-4 h-4 ${color}`} />
-        </div>
-        {title}
-      </CardTitle>
-    </CardHeader>
-    <CardContent>
-      <div className={`text-3xl font-bold ${color} mb-1`}>
-        {prefix}{new Intl.NumberFormat('fr-FR').format(value)}
+const InteractiveMovementCard = ({ title, value, icon: Icon, color, bgColor, description, prefix = '', onClick, isActive }: InteractiveMovementCardProps) => (
+  <motion.div
+    initial={{ opacity: 0, y: 20 }}
+    animate={{ opacity: 1, y: 0 }}
+    transition={{ duration: 0.6, delay: 0.05 }}
+    className={`relative overflow-hidden rounded-xl shadow-xl p-4 text-white bg-gradient-to-br ${bgColor.includes('slate') ? 'from-slate-600 to-slate-500' : bgColor.includes('green') ? 'from-green-600 to-green-500' : bgColor.includes('red') ? 'from-red-600 to-red-500' : 'from-blue-600 to-blue-500'} hover:shadow-2xl transition-all duration-300 transform hover:-translate-y-1 ${
+      onClick ? 'cursor-pointer' : ''
+    } ${isActive ? 'ring-2 ring-white ring-offset-2 ring-offset-transparent' : ''}`}
+    onClick={onClick}
+  >
+    <p className="text-white/80 text-xs font-medium mb-1 flex items-center gap-2">
+      <div className="w-6 h-6 rounded-lg bg-white/20 flex items-center justify-center">
+        <Icon className="w-3 h-3 text-white" />
       </div>
-      <p className="text-xs text-slate-500 dark:text-slate-400">
-        {description}
+      {title}
+    </p>
+
+    <div className="text-xl font-bold text-white mb-1">
+      {prefix}{new Intl.NumberFormat('fr-FR').format(value)}
+    </div>
+
+    <p className="text-xs text-white/70">
+      {description}
+    </p>
+
+    {isActive && (
+      <p className="text-xs text-white/90 mt-2 font-medium">
+        Tri actif
       </p>
-    </CardContent>
-  </Card>
+    )}
+
+    <div className="absolute top-0 right-0 w-20 h-20 bg-white/10 rounded-full -translate-y-10 translate-x-10" />
+  </motion.div>
 )

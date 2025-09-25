@@ -21,7 +21,8 @@ class QuoteRequest extends FormRequest
             'terms_conditions' => 'nullable|string',
             'notes' => 'nullable|string',
             'internal_notes' => 'nullable|string',
-            
+            'promo_code'     => 'nullable|string|max:64',
+
             // Items
             'items' => 'required|array|min:1',
             'items.*.product_id' => 'required|exists:products,id',

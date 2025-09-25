@@ -54,6 +54,16 @@ const parseDateFromYMD = (s: string): Date => {
   return new Date(y, m - 1, d);
 };
 
+/* -------------------------- QS helper (safe 1-arg router.get) -------------------------- */
+function toQueryString(payload: Record<string, unknown>): string {
+  const params = new URLSearchParams();
+  Object.entries(payload).forEach(([k, v]) => {
+    if (v === undefined || v === null || v === '') return;
+    params.append(k, String(v));
+  });
+  return params.toString();
+}
+
 export default function ProductsIndex({ products, filters, sort, dir, flash }: Props) {
   /* ------------------------------ AUTH (Spatie) ------------------------------ */
   const { props: { auth } } = usePage<PageProps<any>>();
@@ -129,12 +139,6 @@ export default function ProductsIndex({ products, filters, sort, dir, flash }: P
   }, [flash?.error]);
 
   /* ------------------------- Inertia helpers --------------------------- */
-  const inertiaOpts: { preserveScroll: boolean; preserveState: boolean; only: string[] } = {
-    preserveScroll: true,
-    preserveState: true,
-    only: ['products', 'filters', 'sort', 'dir', 'flash'],
-  };
-
   const buildQueryPayload = (filtersList: ProductFilterType[], extra: Record<string, any> = {}) => {
     const payload: Record<string, any> = { ...extra };
     filtersList.forEach(filter => {
@@ -173,7 +177,10 @@ export default function ProductsIndex({ products, filters, sort, dir, flash }: P
 
   const go = (filtersList: ProductFilterType[], extra: Record<string, any> = {}) => {
     const payload = buildQueryPayload(filtersList, extra);
-    router.get(route('products.index'), payload, inertiaOpts);
+    const base = route('products.index');
+    const qs = toQueryString(payload);
+    const url = qs ? `${base}?${qs}` : base;
+    router.get(url); // 1 seul argument => compatible
   };
 
   /* --------------------------- Filters CRUD ---------------------------- */
@@ -234,7 +241,9 @@ export default function ProductsIndex({ products, filters, sort, dir, flash }: P
   const resetFilters = () => {
     setActiveFilters([]); setStartDate(null); setEndDate(null);
     setCurrentFilterValue(''); setCurrentFilterValue2('');
-    router.get(route('products.index'), { page: 1, per_page: products.per_page }, inertiaOpts);
+    const base = route('products.index');
+    const qs = toQueryString({ page: 1, per_page: products.per_page });
+    router.get(`${base}?${qs}`);
   };
 
   /* ----------------------- Pagination & Tri --------------------------- */
@@ -261,7 +270,7 @@ export default function ProductsIndex({ products, filters, sort, dir, flash }: P
     if (!canRestore || !selectedIds.length) return;
     if (!confirm(`Restaurer ${selectedIds.length} produit(s) ?`)) return;
     selectedIds.forEach((id) => {
-      router.post(route('products.restore', { id }), {}, inertiaOpts);
+      router.post(route('products.restore', { id })); // 1 arg
     });
     setSelectedIds([]);
   };
@@ -269,7 +278,7 @@ export default function ProductsIndex({ products, filters, sort, dir, flash }: P
     if (!canDelete || !selectedIds.length) return;
     if (!confirm(`Supprimer ${selectedIds.length} produit(s) ?`)) return;
     selectedIds.forEach((id) => {
-      router.delete(route('products.destroy', { id }), {}, inertiaOpts);
+      router.delete(route('products.destroy', { id })); // 1 arg
     });
     setSelectedIds([]);
   };
@@ -405,7 +414,6 @@ export default function ProductsIndex({ products, filters, sort, dir, flash }: P
                                 startDate={startDate}
                                 endDate={endDate}
                                 className="w-full relative z-[80]"
-                                popperClassName="z-[90]"
                               />
                             </div>
                             <span className="text-slate-500 dark:text-slate-400 font-medium">à</span>
@@ -419,7 +427,6 @@ export default function ProductsIndex({ products, filters, sort, dir, flash }: P
                                 endDate={endDate}
                                 minDate={startDate || undefined}
                                 className="w-full relative z-[80]"
-                                popperClassName="z-[90]"
                               />
                             </div>
                           </div>
@@ -696,7 +703,7 @@ export default function ProductsIndex({ products, filters, sort, dir, flash }: P
                                 {p.deleted_at ? (
                                   rowCanRestore && (
                                     <button
-                                      onClick={() => router.post(route('products.restore', { id: p.id }), {}, inertiaOpts)}
+                                      onClick={() => router.post(route('products.restore', { id: p.id }))}
                                       className="text-slate-600 hover:text-slate-900 dark:text-slate-300 dark:hover:text-white p-1 rounded-full hover:bg-slate-100 dark:hover:bg-slate-700"
                                       aria-label="Restaurer"
                                     >
@@ -725,7 +732,7 @@ export default function ProductsIndex({ products, filters, sort, dir, flash }: P
                                     )}
                                     {rowCanDelete && (
                                       <button
-                                        onClick={() => router.delete(route('products.destroy', { id: p.id }), {}, inertiaOpts)}
+                                        onClick={() => router.delete(route('products.destroy', { id: p.id }))}
                                         className="text-red-600 hover:text-red-900 dark:text-red-400 dark:hover:text-red-300 p-1 rounded-full hover:bg-red-50 dark:hover:bg-red-800/30"
                                         aria-label="Supprimer"
                                       >

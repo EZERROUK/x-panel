@@ -30,10 +30,7 @@ export default function AppSettings({
 }) {
   const { data, setData, post, processing, errors, recentlySuccessful } =
     useForm({
-      // ⚠️ nécessaire pour satisfaire la validation backend
-      app_name: settings.app_name ?? '',
-
-      // tes champs souhaités
+      // on garde app_name en lecture seule, et on édite company_name
       company_name: settings.company_name ?? '',
       app_slogan: settings.app_slogan ?? '',
       contact_email: settings.contact_email ?? '',
@@ -60,12 +57,8 @@ export default function AppSettings({
   function handleChange(
     e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>,
   ) {
-    const { name, type } = e.target
-    const value =
-      type === 'file'
-        ? (e.target as HTMLInputElement).files?.[0] ?? null
-        : (e.target as HTMLInputElement | HTMLTextAreaElement).value
-    setData(name, value as any)
+    const { name, type, value, files } = e.target as any
+    setData(name, type === 'file' ? files?.[0] ?? null : value)
   }
 
   function submit(e: React.FormEvent) {
@@ -78,8 +71,7 @@ export default function AppSettings({
       <Head title="Paramètres de l'application" />
 
       <SettingsLayout>
-        {/* mêmes marges que “Apparence” */}
-        <form onSubmit={submit} className="space-y-6" encType="multipart/form-data">
+        <div className="space-y-6">
           {/* Identité & marque */}
           <div className="space-y-6">
             <HeadingSmall
@@ -88,18 +80,15 @@ export default function AppSettings({
             />
 
             <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-              {/* Nom d'application (RO UI) + hidden pour l’envoi */}
+              {/* Nom d'application (RO) */}
               <div className="grid gap-2">
                 <Label>Nom de l’application (lecture seule)</Label>
                 <Input
-                  value={data.app_name || 'X-Panel'}
+                  value={settings.app_name ?? 'X-Panel'}
                   readOnly
                   disabled
                   className="opacity-80"
                 />
-                {/* Assure l’envoi pour la validation backend */}
-                <input type="hidden" name="app_name" value={data.app_name} />
-                <InputError className="mt-2" message={errors.app_name} />
               </div>
 
               {/* Raison sociale */}
@@ -140,9 +129,9 @@ export default function AppSettings({
                   ref={logoInput}
                 />
                 <InputError className="mt-2" message={errors.logo} />
-                {(settings.logo_url || settings.logo_path) && (
+                {settings.logo_path && (
                   <img
-                    src={settings.logo_url ?? settings.logo_path}
+                    src={settings.logo_path}
                     alt="Logo actuel"
                     className="mt-2 w-28 rounded border"
                   />
@@ -161,9 +150,9 @@ export default function AppSettings({
                   ref={logoDarkInput}
                 />
                 <InputError className="mt-2" message={errors.logo_dark} />
-                {(settings.logo_dark_url || settings.logo_dark_path) && (
+                {settings.logo_dark_path && (
                   <img
-                    src={settings.logo_dark_url ?? settings.logo_dark_path}
+                    src={settings.logo_dark_path}
                     alt="Logo sombre"
                     className="mt-2 w-28 rounded border bg-neutral-900"
                   />
@@ -182,7 +171,7 @@ export default function AppSettings({
                   ref={faviconInput}
                 />
                 <InputError className="mt-2" message={errors.favicon} />
-                {(settings.favicon_url) && (
+                {settings.favicon_url && (
                   <img
                     src={settings.favicon_url}
                     alt="Favicon"
@@ -354,18 +343,20 @@ export default function AppSettings({
           </div>
 
           {/* Actions */}
-          <div className="flex items-center gap-4">
-            <Button type="submit" disabled={processing}>
-              Enregistrer
-            </Button>
+          <form onSubmit={submit} className="space-y-6">
+            <div className="flex items-center gap-4">
+              <Button type="submit" disabled={processing}>
+                Enregistrer
+              </Button>
 
-            {recentlySuccessful && (
-              <span className="text-sm text-neutral-600">
-                Modifications enregistrées
-              </span>
-            )}
-          </div>
-        </form>
+              {recentlySuccessful && (
+                <span className="text-sm text-neutral-600">
+                  Modifications enregistrées
+                </span>
+              )}
+            </div>
+          </form>
+        </div>
       </SettingsLayout>
     </AppLayout>
   )

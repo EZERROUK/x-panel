@@ -1,6 +1,5 @@
-/* cspell:ignore Variantes */
-import React, { JSX, useMemo, useState } from 'react'
-import { Head, Link } from '@inertiajs/react'
+import React, { useMemo, useState } from 'react'
+import { Head, Link, usePage } from '@inertiajs/react'
 import { route } from 'ziggy-js'
 import {
   ArrowLeft, Pencil, Info,
@@ -22,9 +21,9 @@ import Thumbnails from 'yet-another-react-lightbox/plugins/thumbnails'
 import 'yet-another-react-lightbox/styles.css'
 import 'yet-another-react-lightbox/plugins/thumbnails.css'
 
-/* ------------------------------------------------------------------ /
-/ Types & props                                                      /
-/ ------------------------------------------------------------------ */
+/* ------------------------------------------------------------------ */
+/* Types & props                                                      */
+/* ------------------------------------------------------------------ */
 type Tab =
   | 'commerce'
   | 'pricing'
@@ -39,6 +38,19 @@ type Tab =
 
 interface Props extends PageProps<{
   product: ProductType & {
+    // ajouts pour éviter unknown
+    is_featured?: boolean
+    has_variants?: boolean
+    track_inventory?: boolean
+    allow_backorder?: boolean
+    stock_quantity?: number
+    low_stock_threshold?: number
+    visibility?: string
+    type?: string
+    sku?: string
+    created_at?: string
+    updated_at?: string
+
     images?: { id: number; path: string; is_primary: boolean; deleted_at: string | null }[]
     brand?: { id: number; name: string } | null
     category?: { id: number; name: string; slug?: string } | null
@@ -49,16 +61,31 @@ interface Props extends PageProps<{
   allCompatibilities?: CompatibilityItem[]
 }> { }
 
-/* ------------------------------------------------------------------ /
-/ Component                                                          /
-/ ------------------------------------------------------------------ */
+/* ------------------------------ Permissions ------------------------------ */
+const useCan = () => {
+  const { props } = usePage<{ auth?: { roles?: string[]; permissions?: string[] } }>()
+  const roles = props.auth?.roles ?? []
+  const perms = props.auth?.permissions ?? []
+  const isSuperAdmin = roles.includes('SuperAdmin') || roles.includes('super-admin')
+  const set = useMemo(() => new Set(perms), [perms.join(',')])
+  const can = (p?: string) => !p || isSuperAdmin || set.has(p)
+  return { can, isSuperAdmin }
+}
+
+/* ------------------------------------------------------------------ */
+/* Component                                                          */
+/* ------------------------------------------------------------------ */
 export default function ShowProduct({ product, allCompatibilities = [] }: Props) {
+  const { can } = useCan()
   const [activeTab, setActiveTab] = useState<Tab>('commerce')
   const [open, setOpen] = useState<number | false>(false)
 
-  /* ------------------------------------------------------------------ /
-  / Données & calculs dérivés                                          /
-  / ------------------------------------------------------------------ */
+  /* ------------------------- Permissions Check -------------------- */
+  const canEdit = can('product_edit')
+
+  /* ------------------------------------------------------------------ */
+  /* Données & calculs dérivés                                          */
+  /* ------------------------------------------------------------------ */
   const imgs = product.images ?? []
   const slides: Slide[] = imgs.map(i => ({ src: `/storage/${i.path}`, alt: product.name }))
   const primaryImg = imgs.find(i => i.is_primary) ?? imgs[0]
@@ -127,9 +154,9 @@ export default function ShowProduct({ product, allCompatibilities = [] }: Props)
     'compat',
   ]
 
-  /* ------------------------------------------------------------------ /
-  / Render                                                             /
-  / ------------------------------------------------------------------ */
+  /* ------------------------------------------------------------------ */
+  /* Render                                                             */
+  /* ------------------------------------------------------------------ */
   return (
     <>
       <Head title={`Produit – ${product.name}`} />
@@ -158,8 +185,8 @@ export default function ShowProduct({ product, allCompatibilities = [] }: Props)
                 <h1 className="text-2xl font-bold text-slate-900 dark:text-white">{product.name}</h1>
                 <div className="flex flex-wrap items-center gap-2">
                   <Badge text={isDeleted ? 'Désactivé' : 'Actif'} color={isDeleted ? 'red' : 'green'} />
-                  {product.is_featured && <Badge text="En vedette" color="green" />}
-                  {product.has_variants && <Badge text="Variantes" color="green" />}
+                  {Boolean(product.is_featured) && <Badge text="En vedette" color="green" />}
+                  {Boolean(product.has_variants) && <Badge text="Variantes" color="green" />}
                 </div>
 
                 {/* Ligne "Créé(e) le … par …" alignée sur Catégories */}
@@ -181,7 +208,7 @@ export default function ShowProduct({ product, allCompatibilities = [] }: Props)
                     <ArrowLeft className="w-4 h-4 mr-1" />Retour
                   </Button>
                 </Link>
-                {!isDeleted && (
+                {!isDeleted && canEdit && (
                   <Link href={route('products.edit', product.id)} className="w-full sm:w-auto">
                     <Button className="group relative flex items-center justify-center rounded-lg bg-gradient-to-r from-red-600 to-red-500 px-5 py-3 text-sm font-semibold text-white shadow-md transition-all hover:from-red-500 hover:to-red-600 focus:ring-2 focus:ring-red-500">
                       <Pencil className="w-4 h-4 mr-2" />
@@ -215,11 +242,11 @@ export default function ShowProduct({ product, allCompatibilities = [] }: Props)
                         <Detail icon={TypeIcon} label="Type" value={typeLabel} />
                         <Detail icon={product.visibility === 'public' ? Eye : EyeOff} label="Visibilité" value={visibilityLabel} />
                         <Detail icon={Store} label="Catégorie" value={product.category?.name ?? '—'} />
-                        <Detail icon={Clock} label="Suivi du stock" value={boolLabel(!!product.track_inventory)} />
+                        <Detail icon={Clock} label="Suivi du stock" value={boolLabel(Boolean(product.track_inventory))} />
                         <Detail icon={Package} label="Stock" value={String(product.stock_quantity ?? 0)} />
                         <Detail icon={Package} label="Seuil stock bas" value={product.low_stock_threshold ?? '—'} />
-                        <Detail icon={Package} label="Précommande" value={boolLabel(!!product.allow_backorder)} />
-                        <Detail icon={Layers} label="Variantes" value={boolLabel(!!product.has_variants)} />
+                        <Detail icon={Package} label="Précommande" value={boolLabel(Boolean(product.allow_backorder))} />
+                        <Detail icon={Layers} label="Variantes" value={boolLabel(Boolean(product.has_variants))} />
                       </div>
                     </Section>
                   </div>
@@ -254,7 +281,7 @@ export default function ShowProduct({ product, allCompatibilities = [] }: Props)
                     <Section title="Disponibilité" icon={<Calendar className="w-4 h-4" />}>
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
                         <Detail icon={Calendar} label="Disponible à partir du" value={availabilityFrom || '—'} />
-                        <Detail icon={Calendar} label="Disponible jusqu’au" value={availabilityUntil || '—'} />
+                        <Detail icon={Calendar} label="Disponible jusqu'au" value={availabilityUntil || '—'} />
                       </div>
                     </Section>
                   </div>
@@ -340,6 +367,7 @@ export default function ShowProduct({ product, allCompatibilities = [] }: Props)
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
                         <Detail icon={Calendar} label="Créé le" value={created ? created.toLocaleString('fr-FR') : '—'} />
                         <Detail icon={Calendar} label="Mis à jour le" value={updated ? updated.toLocaleString('fr-FR') : '—'} />
+                        {creatorName && <Detail icon={Info} label="Créé par" value={creatorName} />}
                       </div>
                     </Section>
                   </div>
@@ -407,9 +435,9 @@ export default function ShowProduct({ product, allCompatibilities = [] }: Props)
   )
 }
 
-/* ------------------------------------------------------------------ /
-/ UI helpers                                                         /
-/ ------------------------------------------------------------------ */
+/* ------------------------------------------------------------------ */
+/* UI helpers                                                         */
+/* ------------------------------------------------------------------ */
 const Section = ({ title, icon, children }: {
   title: string; icon: React.ReactNode; children: React.ReactNode
 }) => (
@@ -424,11 +452,11 @@ const Section = ({ title, icon, children }: {
 
 const Badge = ({ text, color }: { text: string; color: 'red' | 'green' }) => (
   <span
-    className={`inline-block px-2 py-1 text-xs rounded-full font-medium select-none tracking-wide
-    ${color === 'red'
+    className={`inline-block px-2 py-1 text-xs rounded-full font-medium select-none tracking-wide ${
+      color === 'red'
         ? 'bg-red-100 text-red-700 dark:bg-red-500/10 dark:text-red-400'
         : 'bg-green-100 text-green-700 dark:bg-green-500/10 dark:text-green-400'
-      }`}
+    }`}
   >
     {text}
   </span>
@@ -449,7 +477,7 @@ const Detail = ({ icon: Icon, label, value }: {
 const TabButton = ({ tab, active, setActive }: {
   tab: Tab; active: Tab; setActive: (t: Tab) => void;
 }) => {
-  const icons: Record<Tab, JSX.Element> = {
+  const icons: Record<Tab, React.ReactNode> = {
     commerce: <Store className="inline w-4 h-4 mr-2" />,
     pricing: <BadgeEuro className="inline w-4 h-4 mr-2" />,
     availability: <Calendar className="inline w-4 h-4 mr-2" />,
@@ -477,10 +505,11 @@ const TabButton = ({ tab, active, setActive }: {
   return (
     <button
       onClick={() => setActive(tab)}
-      className={`w-full px-4 py-3 text-left text-sm font-medium transition flex items-center
-        ${isActive
+      className={`w-full px-4 py-3 text-left text-sm font-medium transition flex items-center ${
+        isActive
           ? 'bg-gradient-to-r from-red-600 to-red-500 text-white rounded-l-xl shadow-inner'
-          : 'text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-white/5 hover:text-slate-800 dark:hover:text-white'}`}
+          : 'text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-white/5 hover:text-slate-800 dark:hover:text-white'
+      }`}
     >
       {icons[tab]} {labels[tab]}
     </button>
@@ -499,7 +528,8 @@ const GalleryGrid = ({ slides, open, setOpen }: {
           onClick={() => setOpen(i)}
           className="group relative rounded-xl overflow-hidden border border-slate-200 dark:border-slate-700 hover:border-slate-400 dark:hover:border-slate-500 shadow-sm hover:shadow-md transition"
           style={{
-            width: 140, height: 104,
+            width: 140,
+            height: 104,
             backgroundColor: '#f8f8f8',
             backgroundImage: png
               ? `linear-gradient(45deg,rgba(120,120,120,.2) 25%,transparent 25%,transparent 75%,rgba(120,120,120,.2) 75%), linear-gradient(45deg,rgba(120,120,120,.2) 25%,transparent 25%,transparent 75%,rgba(120,120,120,.2) 75%)`
@@ -508,8 +538,11 @@ const GalleryGrid = ({ slides, open, setOpen }: {
             backgroundPosition: '0 0,8px 8px',
           }}
         >
-          {/* img.alt est optionnel dans Slide, on fallback sur le nom du produit */}
-          <img src={String(img.src)} alt={(img as any).alt ?? 'image'} className={`w-full h-full ${png ? 'object-contain' : 'object-cover'}`} />
+          <img
+            src={String(img.src)}
+            alt={(img as any).alt ?? 'image'}
+            className={`w-full h-full ${png ? 'object-contain' : 'object-cover'}`}
+          />
           <div className="absolute inset-0 z-20 flex items-center justify-center">
             <div className="absolute inset-0 bg-black/70 opacity-0 group-hover:opacity-100 transition-opacity" />
             <div className="opacity-0 group-hover:opacity-100 z-30 transition-opacity">
@@ -524,19 +557,22 @@ const GalleryGrid = ({ slides, open, setOpen }: {
   </div>
 )
 
-/* ------------------------------------------------------------------ /
-/ Utils                                                              /
-/ ------------------------------------------------------------------ */
+/* ------------------------------------------------------------------ */
+/* Utils                                                              */
+/* ------------------------------------------------------------------ */
 function toFloat(v: unknown): number {
   if (v === null || v === undefined || v === '') return 0
   const n = typeof v === 'number' ? v : parseFloat(String(v).replace(',', '.'))
   return Number.isFinite(n) ? n : 0
 }
+
 function round2(n: number) { return Math.round(n * 100) / 100 }
 function round1(n: number) { return Math.round(n * 10) / 10 }
+
 function formatMoney(n: number, symbol: string) {
   return `${n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${symbol}`.trim()
 }
+
 function computeMinAllowedPrice(price: number, type: '' | 'percentage' | 'amount', value: number): number | null {
   if (!type) return null
   if (value < 0) return Math.max(0, price)
@@ -544,44 +580,54 @@ function computeMinAllowedPrice(price: number, type: '' | 'percentage' | 'amount
   if (type === 'amount') return Math.max(0, round2(price - value))
   return null
 }
+
 function isPng(path: string) { return path?.toLowerCase().endsWith('.png') }
+
 function formatDateTimeReadable(s?: string | null) {
   if (!s) return ''
   const d = new Date(s)
   if (isNaN(d.getTime())) return ''
   return d.toLocaleString('fr-FR')
 }
+
 function boolLabel(b: boolean) { return b ? 'Oui' : 'Non' }
+
 function fmtOrDash(val: any, unit?: string) {
   if (val === null || val === undefined || val === '') return '—'
   const v = typeof val === 'number' ? val : Number(val)
   if (Number.isFinite(v)) return unit ? `${v} ${unit}` : String(v)
   return String(val)
 }
+
 function toVisibilityLabel(v?: string) {
   if (v === 'public') return 'Publique'
   if (v === 'hidden') return 'Masqué'
   if (v === 'draft') return 'Brouillon'
   return v ?? '—'
 }
+
 function toTypeLabel(t?: string) {
   if (t === 'physical') return 'Physique'
   if (t === 'digital') return 'Numérique'
   if (t === 'service') return 'Service'
   return t ?? '—'
 }
+
 function tolTypeLabel(t: '' | 'percentage' | 'amount') {
   if (!t) return '—'
   return t === 'percentage' ? 'Pourcentage' : 'Montant'
 }
+
 function fallbackCurrencySymbol(code?: string) {
   if (!code) return ''
   const map: Record<string, string> = { EUR: '€', USD: '$', GBP: '£', MAD: 'DH', CAD: '$', CHF: 'CHF', JPY: '¥' }
   return map[code.toUpperCase()] ?? code
 }
+
 function humanize(key: string) {
   return key.replace(/[_-]+/g, ' ').replace(/\b\w/g, (m) => m.toUpperCase())
 }
+
 function renderAttrValue(val: any): React.ReactNode {
   if (val === null || val === undefined || val === '') return '—'
   if (typeof val === 'boolean') return val ? 'Oui' : 'Non'

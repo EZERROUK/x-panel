@@ -1,7 +1,4 @@
-/* ------------------------------------------------------------------ */
-/* Show.tsx — Factures / Invoice (avec permissions alignées Index)    */
-/* ------------------------------------------------------------------ */
-import React, { useMemo, useState, useCallback } from 'react'
+import React, { useMemo, useState, useCallback, JSX } from 'react'
 import { Head, Link, router, usePage } from '@inertiajs/react'
 import { route } from 'ziggy-js'
 import {
@@ -29,17 +26,7 @@ import {
 import AppLayout           from '@/layouts/app-layout'
 import ParticlesBackground from '@/components/ParticlesBackground'
 import { Button }          from '@/components/ui/button'
-
-/* ------------------------------ Permissions ------------------------------ */
-const useCan = () => {
-  const { props } = usePage<{ auth?: { roles?: string[]; permissions?: string[] } }>()
-  const roles = props.auth?.roles ?? []
-  const perms = props.auth?.permissions ?? []
-  const isSuperAdmin = roles.includes('SuperAdmin') || roles.includes('super-admin')
-  const set = React.useMemo(() => new Set(perms), [perms.join(',')])
-  const can = (p?: string) => !p || isSuperAdmin || set.has(p)
-  return { can, isSuperAdmin }
-}
+import type { PageProps }  from '@/types'
 
 /* ------------------------------------------------------------------ */
 /* Types & Props                                                      */
@@ -96,15 +83,23 @@ interface Invoice {
   is_overdue?     : boolean
 }
 
-interface Props {
-  invoice: Invoice
+interface Props extends PageProps<{ invoice: Invoice }> {}
+
+/* ------------------------------ Permissions ------------------------------ */
+const useCan = () => {
+  const { props } = usePage<{ auth?: { roles?: string[]; permissions?: string[] } }>()
+  const roles = props.auth?.roles ?? []
+  const perms = props.auth?.permissions ?? []
+  const isSuperAdmin = roles.includes('SuperAdmin') || roles.includes('super-admin')
+  const set = useMemo(() => new Set(perms), [perms.join(',')])
+  const can = (p?: string) => !p || isSuperAdmin || set.has(p)
+  return { can, isSuperAdmin }
 }
 
 /* ------------------------------------------------------------------ */
 /* Main component                                                     */
 /* ------------------------------------------------------------------ */
 export default function InvoiceShow({ invoice }: Props) {
-  /* ───────── permissions ───────── */
   const { can } = useCan()
 
   /* ───────── state pour les onglets et menus ───────── */
@@ -187,20 +182,39 @@ export default function InvoiceShow({ invoice }: Props) {
     )
   }, [invoice.items])
 
+  /* ------------------------- Permissions Check -------------------- */
+  // ✅ Permissions corrigées selon le seeder
+  const canEdit = can('invoice_edit') && invoice.status === 'draft'
+  const canExport = can('invoice_export')
+  const canDuplicate = can('invoice_duplicate') // ✅ Corrigé : seule permission invoice_duplicate
+  const canSend = can('invoice_send') && (invoice.status === 'draft' || invoice.status === 'cancelled')
+  const canMarkPaid = can('invoice_mark_paid') && (['sent', 'issued', 'partially_paid'].includes(invoice.status) || !!invoice.is_overdue)
+  const canSendReminder = can('invoice_send_reminder') && !!invoice.is_overdue
+  const canChangeStatus = can('invoice_change_status')
+  const canReopen = can('invoice_reopen') && invoice.status === 'refunded'
+
   /* ------------------------- Actions (avec permissions) ------------ */
   const exportPdf = () => {
-    if (!can('invoice_export')) return alert('Permission manquante: invoice_export')
+    if (!canExport) {
+      alert('Permission manquante: invoice_export')
+      return
+    }
     window.open(route('invoices.export-pdf', invoice.id), '_blank', 'noopener')
   }
 
   const duplicateInvoice = () => {
-    if (!(can('invoice_duplicate') || can('invoice_create')))
-      return alert('Permission manquante: invoice_duplicate')
+    if (!canDuplicate) {
+      alert('Permission manquante: invoice_duplicate')
+      return
+    }
     router.post(route('invoices.duplicate', invoice.id))
   }
 
   const sendReminder = () => {
-    if (!can('invoice_send_reminder')) return alert('Permission manquante: invoice_send_reminder')
+    if (!canSendReminder) {
+      alert('Permission manquante: invoice_send_reminder')
+      return
+    }
     if (!confirm('Envoyer un rappel de paiement au client ?')) return
     router.post(route('invoices.send-reminder', invoice.id), {}, {
       preserveScroll: true,
@@ -209,21 +223,30 @@ export default function InvoiceShow({ invoice }: Props) {
 
   /* → Actions modifiées pour utiliser la popup */
   const startSend = () => {
-    if (!can('invoice_send')) return alert('Permission manquante: invoice_send')
+    if (!canSend) {
+      alert('Permission manquante: invoice_send')
+      return
+    }
     setPendingAction('send')
     setComment('')
     setCommentModalOpen(true)
   }
 
   const startMarkAsPaid = () => {
-    if (!can('invoice_mark_paid')) return alert('Permission manquante: invoice_mark_paid')
+    if (!canMarkPaid) {
+      alert('Permission manquante: invoice_mark_paid')
+      return
+    }
     setPendingAction('mark-paid')
     setComment('')
     setCommentModalOpen(true)
   }
 
   const startReopen = () => {
-    if (!can('invoice_reopen')) return alert('Permission manquante: invoice_reopen')
+    if (!canReopen) {
+      alert('Permission manquante: invoice_reopen')
+      return
+    }
     setPendingAction('reopen')
     setComment('')
     setCommentModalOpen(true)
@@ -231,7 +254,10 @@ export default function InvoiceShow({ invoice }: Props) {
 
   /* → 1. L'utilisateur choisit un nouveau statut */
   const startStatusChange = (newStatus: InvoiceStatus) => {
-    if (!can('invoice_change_status')) return alert('Permission manquante: invoice_change_status')
+    if (!canChangeStatus) {
+      alert('Permission manquante: invoice_change_status')
+      return
+    }
     setPendingStatus(newStatus)
     setPendingAction('status')
     setComment('')
@@ -243,7 +269,7 @@ export default function InvoiceShow({ invoice }: Props) {
   const submitAction = () => {
     setChangingStatus(true)
 
-    // mapping action -> permission
+    // ✅ mapping action -> permission corrigé selon le seeder
     const needs: Record<NonNullable<typeof pendingAction>, string> = {
       'reopen'    : 'invoice_reopen',
       'send'      : 'invoice_send',
@@ -253,7 +279,8 @@ export default function InvoiceShow({ invoice }: Props) {
 
     if (pendingAction && !can(needs[pendingAction])) {
       setChangingStatus(false)
-      return alert(`Permission manquante: ${needs[pendingAction]}`)
+      alert(`Permission manquante: ${needs[pendingAction]}`)
+      return
     }
 
     if (pendingAction === 'reopen') {
@@ -387,7 +414,14 @@ export default function InvoiceShow({ invoice }: Props) {
               statusMenuOpen={statusMenuOpen}
               setStatusMenuOpen={setStatusMenuOpen}
               startStatusChange={startStatusChange}
-              can={can}
+              canEdit={canEdit}
+              canExport={canExport}
+              canDuplicate={canDuplicate}
+              canSend={canSend}
+              canMarkPaid={canMarkPaid}
+              canSendReminder={canSendReminder}
+              canChangeStatus={canChangeStatus}
+              canReopen={canReopen}
             />
           </div>
 
@@ -501,7 +535,14 @@ const Header = ({
   statusMenuOpen,
   setStatusMenuOpen,
   startStatusChange,
-  can,
+  canEdit,
+  canExport,
+  canDuplicate,
+  canSend,
+  canMarkPaid,
+  canSendReminder,
+  canChangeStatus,
+  canReopen,
 }: {
   invoice: Invoice
   totals: { sub: number; tva: number }
@@ -518,22 +559,17 @@ const Header = ({
   statusMenuOpen: boolean
   setStatusMenuOpen: (b: boolean) => void
   startStatusChange: (s: InvoiceStatus) => void
-  can: (perm?: string) => boolean
-}) => {
-  const hasAnyAction =
-    (invoice.status === 'draft' && can('invoice_edit')) ||
-    can('invoice_export') ||
-    (can('invoice_duplicate') || can('invoice_create')) ||
-    ((['draft','cancelled'].includes(invoice.status)) && can('invoice_send')) ||
-    ((['sent','issued','partially_paid'].includes(invoice.status) || !!invoice.is_overdue) && can('invoice_mark_paid')) ||
-    (!!invoice.is_overdue && can('invoice_send_reminder')) ||
-    (invoice.status === 'paid' && can('invoice_change_status')) ||
-    (invoice.status === 'refunded' && can('invoice_reopen')) ||
-    (can('invoice_change_status') && (transitions[invoice.status]?.length ?? 0) > 0)
-
-  return (
+  canEdit: boolean
+  canExport: boolean
+  canDuplicate: boolean
+  canSend: boolean
+  canMarkPaid: boolean
+  canSendReminder: boolean
+  canChangeStatus: boolean
+  canReopen: boolean
+}) => (
   <div
-    className="bg-white dark:bg:white/5 dark:bg-white/5 border border-slate-200 dark:border-slate-700
+    className="bg-white dark:bg-white/5 border border-slate-200 dark:border-slate-700
                backdrop-blur-md p-6 rounded-xl shadow-xl flex flex-col lg:flex-row gap-6 items-start"
   >
     {/* Icône */}
@@ -567,7 +603,6 @@ const Header = ({
     </div>
 
     {/* Actions */}
-    {hasAnyAction && (
     <div className="flex flex-col gap-2 w-full sm:w-auto">
       <Link href={route('invoices.index')} className="w-full sm:w-auto">
         <Button variant="outline" className="w-full sm:w-auto">
@@ -577,7 +612,7 @@ const Header = ({
       </Link>
 
       {/* Edit (brouillon uniquement) */}
-      {invoice.status === 'draft' && can('invoice_edit') && (
+      {/* {canEdit && (
         <Link href={route('invoices.edit', invoice.id)} className="w-full sm:w-auto">
           <Button
             className="group flex items-center justify-center
@@ -589,10 +624,10 @@ const Header = ({
             Modifier
           </Button>
         </Link>
-      )}
+      )} */}
 
       {/* Export PDF */}
-      {can('invoice_export') && (
+      {canExport && (
         <Button variant="secondary" className="w-full sm:w-auto" onClick={exportPdf}>
           <Download className="w-4 h-4 mr-2" />
           Exporter&nbsp;PDF
@@ -600,7 +635,7 @@ const Header = ({
       )}
 
       {/* Dupliquer */}
-      {(can('invoice_duplicate') || can('invoice_create')) && (
+      {canDuplicate && (
         <Button variant="secondary" className="w-full sm:w-auto" onClick={duplicateInvoice}>
           <CopyPlus className="w-4 h-4 mr-2" />
           Dupliquer
@@ -608,7 +643,7 @@ const Header = ({
       )}
 
       {/* Envoyer (draft|cancelled) */}
-      {(invoice.status === 'draft' || invoice.status === 'cancelled') && can('invoice_send') && (
+      {canSend && (
         <Button
           variant="secondary" className="w-full sm:w-auto"
           onClick={startSend}
@@ -619,7 +654,7 @@ const Header = ({
       )}
 
       {/* Marquer payée */}
-      {(['sent', 'issued', 'partially_paid'].includes(invoice.status) || !!invoice.is_overdue) && can('invoice_mark_paid') && (
+      {canMarkPaid && (
         <Button
           variant="secondary" className="w-full sm:w-auto"
           onClick={startMarkAsPaid}
@@ -630,7 +665,7 @@ const Header = ({
       )}
 
       {/* Rappel paiement */}
-      {!!invoice.is_overdue && can('invoice_send_reminder') && (
+      {canSendReminder && (
         <Button
           variant="secondary" className="w-full sm:w-auto"
           onClick={sendReminder}
@@ -641,7 +676,7 @@ const Header = ({
       )}
 
       {/* Rembourser (paid → refunded) */}
-      {invoice.status === 'paid' && can('invoice_change_status') && (
+      {invoice.status === 'paid' && canChangeStatus && (
         <Button
           variant="secondary"
           className="w-full sm:w-auto"
@@ -653,7 +688,7 @@ const Header = ({
       )}
 
       {/* Réouvrir (refunded → draft) */}
-      {invoice.status === 'refunded' && can('invoice_reopen') && (
+      {canReopen && (
         <Button
           variant="secondary"
           className="w-full sm:w-auto"
@@ -665,7 +700,7 @@ const Header = ({
       )}
 
       {/* Menu Changer statut (options dynamiques alignées BE) */}
-      {can('invoice_change_status') && transitions[invoice.status]?.length ? (
+      {canChangeStatus && transitions[invoice.status]?.length ? (
         <div className="relative">
           <Button
             variant="outline"
@@ -697,9 +732,9 @@ const Header = ({
         </div>
       ) : null}
     </div>
-    )}
   </div>
-)}
+)
+
 /* -------------------- PANEL — Détails ----------------------------- */
 const DetailsPanel = ({
   invoice,
