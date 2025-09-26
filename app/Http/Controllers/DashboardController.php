@@ -36,6 +36,12 @@ class DashboardController extends Controller
         $trendsData = $this->getTrendsData($startDate);
         $heatmapData = $this->getHeatmapData($startDate);
 
+        // Nouveaux KPIs e-commerce/ERP
+        $ecommerceMetrics = $this->getEcommerceMetrics($startDate);
+        $erpMetrics = $this->getERPMetrics($startDate);
+        $alertsData = $this->getAlertsData();
+        $cashflowData = $this->getCashflowData($startDate);
+
         return Inertia::render('dashboard', [
             'kpis' => $kpis,
             'salesChart' => $salesChart,
@@ -51,10 +57,256 @@ class DashboardController extends Controller
             'performanceMetrics' => $performanceMetrics,
             'trendsData' => $trendsData,
             'heatmapData' => $heatmapData,
+            'ecommerceMetrics' => $ecommerceMetrics,
+            'erpMetrics' => $erpMetrics,
+            'alertsData' => $alertsData,
+            'cashflowData' => $cashflowData,
             'period' => $period,
         ]);
     }
 
+    private function getEcommerceMetrics(Carbon $startDate): array
+    {
+        // Taux d'abandon de panier (simulé via devis non convertis)
+        $totalQuotes = Quote::where('created_at', '>=', $startDate)->count();
+        $abandonedQuotes = Quote::where('created_at', '>=', $startDate)
+            ->whereIn('status', ['draft', 'sent', 'viewed', 'expired'])
+            ->count();
+        $abandonmentRate = $totalQuotes > 0 ? ($abandonedQuotes / $totalQuotes) * 100 : 0;
+
+        // Valeur moyenne du panier
+        $avgOrderValue = Order::where('created_at', '>=', $startDate)
+            ->avg('total_ttc') ?? 0;
+
+        // Produits les plus vendus par catégorie
+        $topProductsByCategory = DB::table('order_items')
+            ->join('orders', 'orders.id', '=', 'order_items.order_id')
+            ->join('products', 'products.id', '=', 'order_items.product_id')
+            ->join('categories', 'categories.id', '=', 'products.category_id')
+            ->select(
+                'categories.name as category_name',
+                'products.name as product_name',
+                DB::raw('SUM(order_items.quantity) as total_sold'),
+                DB::raw('SUM(order_items.line_total_ttc) as total_revenue')
+            )
+            ->where('orders.created_at', '>=', $startDate)
+            ->groupBy('categories.id', 'products.id', 'categories.name', 'products.name')
+            ->orderByDesc('total_sold')
+            ->limit(10)
+            ->get();
+
+        // Analyse des retours
+        $returnRate = $this->calculateReturnRate($startDate);
+
+        return [
+            'abandonmentRate' => round($abandonmentRate, 1),
+            'avgOrderValue' => [
+                'value' => $avgOrderValue,
+                'formatted' => number_format($avgOrderValue, 2, ',', ' ') . ' MAD',
+            ],
+            'topProductsByCategory' => $topProductsByCategory,
+            'returnRate' => $returnRate,
+        ];
+    }
+
+    private function getERPMetrics(Carbon $startDate): array
+    {
+        // Délai moyen de traitement des commandes
+        $avgProcessingTime = Order::where('created_at', '>=', $startDate)
+            ->whereNotNull('confirmed_at')
+            ->selectRaw('AVG(TIMESTAMPDIFF(HOUR, created_at, confirmed_at)) as avg_hours')
+            ->value('avg_hours') ?? 0;
+
+        // Rotation des stocks
+        $stockTurnover = $this->calculateStockTurnover($startDate);
+
+        // Efficacité des ventes (conversion devis -> commandes)
+        $salesEfficiency = $this->calculateSalesEfficiency($startDate);
+
+        // Analyse des fournisseurs
+        $supplierMetrics = $this->getSupplierMetrics($startDate);
+
+        // Prévisions de stock
+        $stockForecasts = $this->getStockForecasts();
+
+        return [
+            'avgProcessingTime' => round($avgProcessingTime, 1),
+            'stockTurnover' => $stockTurnover,
+            'salesEfficiency' => $salesEfficiency,
+            'supplierMetrics' => $supplierMetrics,
+            'stockForecasts' => $stockForecasts,
+        ];
+    }
+
+    private function getAlertsData(): array
+    {
+        // Produits en rupture
+        $outOfStock = Product::where('track_inventory', true)
+            ->where('stock_quantity', 0)
+            ->count();
+
+        // Produits en stock faible
+        $lowStock = Product::where('track_inventory', true)
+            ->whereColumn('stock_quantity', '<=', 'low_stock_threshold')
+            ->where('stock_quantity', '>', 0)
+            ->count();
+
+        // Factures en retard
+        $overdueInvoices = Invoice::where('due_date', '<', now())
+            ->whereIn('status', ['sent', 'issued', 'partially_paid'])
+            ->count();
+
+        // Devis expirés
+        $expiredQuotes = Quote::where('valid_until', '<', now())
+            ->whereIn('status', ['sent', 'viewed'])
+            ->count();
+
+        return [
+            'outOfStock' => $outOfStock,
+            'lowStock' => $lowStock,
+            'overdueInvoices' => $overdueInvoices,
+            'expiredQuotes' => $expiredQuotes,
+            'totalAlerts' => $outOfStock + $lowStock + $overdueInvoices + $expiredQuotes,
+        ];
+    }
+
+    private function getCashflowData(Carbon $startDate): array
+    {
+        // Revenus attendus (factures émises non payées)
+        $expectedRevenue = Invoice::whereIn('status', ['sent', 'issued', 'partially_paid'])
+            ->sum('total_ttc');
+
+        // Revenus réalisés
+        $realizedRevenue = Invoice::where('status', 'paid')
+            ->where('date', '>=', $startDate)
+            ->sum('total_ttc');
+
+        // Évolution mensuelle des revenus
+        $monthlyRevenue = Invoice::select(
+                DB::raw('DATE_FORMAT(date, "%Y-%m") as month'),
+                DB::raw('SUM(total_ttc) as revenue')
+            )
+            ->where('status', 'paid')
+            ->where('date', '>=', $startDate->copy()->subMonths(12))
+            ->groupBy('month')
+            ->orderBy('month')
+            ->get();
+
+        // Prévisions basées sur les devis en cours
+        $potentialRevenue = Quote::whereIn('status', ['sent', 'viewed', 'accepted'])
+            ->sum('total_ttc');
+
+        return [
+            'expectedRevenue' => [
+                'value' => $expectedRevenue,
+                'formatted' => number_format($expectedRevenue, 2, ',', ' ') . ' MAD',
+            ],
+            'realizedRevenue' => [
+                'value' => $realizedRevenue,
+                'formatted' => number_format($realizedRevenue, 2, ',', ' ') . ' MAD',
+            ],
+            'potentialRevenue' => [
+                'value' => $potentialRevenue,
+                'formatted' => number_format($potentialRevenue, 2, ',', ' ') . ' MAD',
+            ],
+            'monthlyRevenue' => $monthlyRevenue->map(function($item) {
+                $date = Carbon::createFromFormat('Y-m', $item->month);
+                return [
+                    'month' => $item->month,
+                    'label' => $date->format('M Y'),
+                    'revenue' => (float) $item->revenue,
+                ];
+            }),
+        ];
+    }
+
+    private function calculateReturnRate(Carbon $startDate): float
+    {
+        // Simulé via les mouvements de stock "retour client"
+        $returns = StockMovement::where('type', 'in')
+            ->where('movement_date', '>=', $startDate)
+            ->whereHas('movementReason', function($q) {
+                $q->where('name', 'like', '%retour%client%');
+            })
+            ->sum('quantity');
+
+        $totalSold = StockMovement::where('type', 'out')
+            ->where('movement_date', '>=', $startDate)
+            ->sum('quantity');
+
+        return $totalSold > 0 ? ($returns / abs($totalSold)) * 100 : 0;
+    }
+
+    private function calculateStockTurnover(Carbon $startDate): float
+    {
+        $avgStock = Product::where('track_inventory', true)->avg('stock_quantity') ?? 1;
+        $soldQuantity = abs(StockMovement::where('type', 'out')
+            ->where('movement_date', '>=', $startDate)
+            ->sum('quantity'));
+
+        return $avgStock > 0 ? $soldQuantity / $avgStock : 0;
+    }
+
+    private function calculateSalesEfficiency(Carbon $startDate): array
+    {
+        $totalQuotes = Quote::where('created_at', '>=', $startDate)->count();
+        $convertedQuotes = Quote::where('created_at', '>=', $startDate)
+            ->where('status', 'converted')
+            ->count();
+
+        $conversionRate = $totalQuotes > 0 ? ($convertedQuotes / $totalQuotes) * 100 : 0;
+
+        return [
+            'conversionRate' => round($conversionRate, 1),
+            'totalQuotes' => $totalQuotes,
+            'convertedQuotes' => $convertedQuotes,
+        ];
+    }
+
+    private function getSupplierMetrics(Carbon $startDate): array
+    {
+        return Provider::select('providers.*')
+            ->selectRaw('COUNT(stock_movements.id) as movements_count')
+            ->selectRaw('SUM(stock_movements.total_cost) as total_spent')
+            ->leftJoin('stock_movements', 'providers.id', '=', 'stock_movements.provider_id')
+            ->where('stock_movements.movement_date', '>=', $startDate)
+            ->where('stock_movements.type', 'in')
+            ->groupBy('providers.id')
+            ->orderByDesc('total_spent')
+            ->limit(5)
+            ->get();
+    }
+
+    private function getStockForecasts(): array
+    {
+        // Prévision simple basée sur la consommation des 30 derniers jours
+        $products = Product::where('track_inventory', true)
+            ->where('stock_quantity', '>', 0)
+            ->get();
+
+        $forecasts = [];
+        foreach ($products as $product) {
+            $avgConsumption = abs(StockMovement::where('product_id', $product->id)
+                ->where('type', 'out')
+                ->where('movement_date', '>=', now()->subDays(30))
+                ->avg('quantity')) ?? 0;
+
+            if ($avgConsumption > 0) {
+                $daysRemaining = $product->stock_quantity / $avgConsumption;
+                if ($daysRemaining <= 30) { // Alerte si moins de 30 jours
+                    $forecasts[] = [
+                        'product_id' => $product->id,
+                        'product_name' => $product->name,
+                        'current_stock' => $product->stock_quantity,
+                        'days_remaining' => round($daysRemaining, 1),
+                        'avg_consumption' => round($avgConsumption, 2),
+                    ];
+                }
+            }
+        }
+
+        return collect($forecasts)->sortBy('days_remaining')->take(10)->values()->toArray();
+    }
     private function getMainKPIs(Carbon $startDate): array
     {
         $now = Carbon::now();

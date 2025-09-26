@@ -44,6 +44,7 @@ class RolePermissionSeeder extends Seeder
 
             // Commandes (orders)
             'order_list', 'order_show',
+            'order_create', 'order_edit', 'order_delete', 'order_export',
 
             // Factures (invoices)
             'invoice_list', 'invoice_create', 'invoice_show', 'invoice_edit', 'invoice_delete',

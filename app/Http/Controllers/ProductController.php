@@ -31,6 +31,11 @@ class ProductController extends Controller
                 'category:id,name',
                 'currency:code,symbol',
                 'createdBy:id,name',
+            ])
+            ->select([
+                'products.*',
+                DB::raw('(CASE WHEN stock_quantity <= low_stock_threshold THEN 1 ELSE 0 END) as is_low_stock'),
+                DB::raw('(CASE WHEN stock_quantity = 0 THEN 1 ELSE 0 END) as is_out_of_stock')
             ]);
 
         // Recherche globale améliorée

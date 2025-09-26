@@ -145,7 +145,11 @@ Route::middleware(['auth', 'verified'])->group(function () {
     /* Commandes */
     Route::prefix('orders')->name('orders.')->group(function () {
         Route::get('/',        [OrderController::class, 'index'])->middleware('permission:order_list')->name('index');
+        Route::get('/create',  [OrderController::class, 'create'])->middleware('permission:order_create')->name('create');
+        Route::post('/',       [OrderController::class, 'store'])->middleware('permission:order_create')->name('store');
         Route::get('/{order}', [OrderController::class, 'show' ])->middleware('permission:order_show')->name('show');
+        Route::post('/{order}/change-status', [OrderController::class, 'changeStatus'])->middleware('permission:order_edit')->name('change-status');
+        Route::get('/{order}/export-pdf', [OrderController::class, 'exportPdf'])->middleware('permission:order_export')->name('export-pdf');
     });
 
     /* Catalogue – Produits */
@@ -340,6 +344,33 @@ Route::middleware(['auth', 'verified'])->group(function () {
         Route::delete('/',              [PromotionController::class, 'massDestroy'])->middleware('permission:promotion_delete')->name('mass-destroy');
     });
 
+    /* Rapports */
+    Route::prefix('reports')->name('reports.')->middleware('permission:report_access')->group(function () {
+        Route::get('/',           [ReportController::class, 'index'])->name('index');
+        Route::get('/sales',      [ReportController::class, 'sales'])->name('sales');
+        Route::get('/inventory',  [ReportController::class, 'inventory'])->name('inventory');
+        Route::get('/financial',  [ReportController::class, 'financial'])->name('financial');
+    });
+
+    /* Retours et SAV */
+    Route::prefix('returns')->name('returns.')->group(function () {
+        Route::get('/',                [ReturnController::class, 'index'])->middleware('permission:return_list')->name('index');
+        Route::get('/create',          [ReturnController::class, 'create'])->middleware('permission:return_create')->name('create');
+        Route::post('/',               [ReturnController::class, 'store'])->middleware('permission:return_create')->name('store');
+        Route::get('/{return}',        [ReturnController::class, 'show'])->middleware('permission:return_show')->name('show');
+        Route::post('/{return}/approve', [ReturnController::class, 'approve'])->middleware('permission:return_edit')->name('approve');
+        Route::post('/{return}/process', [ReturnController::class, 'process'])->middleware('permission:return_edit')->name('process');
+    });
+
+    /* Support / Tickets SAV */
+    Route::prefix('support')->name('support.')->group(function () {
+        Route::get('/',              [SupportController::class, 'index'])->middleware('permission:support_list')->name('index');
+        Route::get('/create',        [SupportController::class, 'create'])->middleware('permission:support_create')->name('create');
+        Route::post('/',             [SupportController::class, 'store'])->middleware('permission:support_create')->name('store');
+        Route::get('/{ticket}',      [SupportController::class, 'show'])->middleware('permission:support_show')->name('show');
+        Route::post('/{ticket}/reply', [SupportController::class, 'reply'])->middleware('permission:support_edit')->name('reply');
+        Route::post('/{ticket}/close', [SupportController::class, 'close'])->middleware('permission:support_edit')->name('close');
+    });
 });
 
 require __DIR__ . '/settings.php';

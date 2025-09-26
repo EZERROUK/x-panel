@@ -45,6 +45,26 @@ class Order extends Model
         'deleted_at' => 'datetime',
     ];
 
+    public static function statuses(): array
+    {
+        return ['pending', 'confirmed', 'processing', 'shipped', 'delivered', 'cancelled'];
+    }
+
+    public static function generateOrderNumber(): string
+    {
+        $year = now()->year;
+        $last = static::whereYear('order_date', $year)
+            ->orderByDesc('order_number')
+            ->first();
+
+        $seq = 1;
+        if ($last && preg_match("/^CMD-{$year}-(\d{6})$/", $last->order_number, $m)) {
+            $seq = (int) $m[1] + 1;
+        }
+
+        return sprintf("CMD-%d-%06d", $year, $seq);
+    }
+
     /* Relations */
     public function client(): BelongsTo
     {
@@ -69,6 +89,41 @@ class Order extends Model
     public function items(): HasMany
     {
         return $this->hasMany(OrderItem::class)->orderBy('sort_order');
+    }
+
+    /* Méthodes métier */
+    public function calculateTotals(): void
+    {
+        $totals = $this->items->reduce(function ($carry, $item) {
+            $lineHt = ($item->quantity ?? 0) * ($item->unit_price_ht_snapshot ?? 0);
+            $lineTva = $lineHt * (($item->tax_rate_snapshot ?? 0) / 100);
+
+            $carry['ht'] += $lineHt;
+            $carry['tva'] += $lineTva;
+
+            return $carry;
+        }, ['ht' => 0, 'tva' => 0]);
+
+        $this->update([
+            'subtotal_ht' => $totals['ht'],
+            'total_tax'   => $totals['tva'],
+            'total_ttc'   => $totals['ht'] + $totals['tva'],
+        ]);
+    }
+
+    public function canBeEdited(): bool
+    {
+        return in_array($this->status, ['pending', 'confirmed'], true);
+    }
+
+    public function canBeCancelled(): bool
+    {
+        return !in_array($this->status, ['delivered', 'cancelled'], true);
+    }
+
+    public function isDelivered(): bool
+    {
+        return $this->status === 'delivered';
     }
 
     /* Activity Log */
